@@ -1,0 +1,8 @@
+Front End
+No lexical, syntax, or semantic errors.
+
+MIPS Assembly
+playground/snlcompiler/test/out/codegen_existing/lexer_test.asm
+
+Program Output
+0

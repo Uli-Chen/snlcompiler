@@ -1,0 +1,53 @@
+# SNL lexical grammar used by snl_lexer.py.
+#
+# Format:
+#   KEYWORD <source-word> <LexType>
+#   SYMBOL  <source-symbol> <LexType>
+#   COMMENT <begin> <end>
+#   IDENTIFIER <regular-expression>
+#   INTEGER <regular-expression>
+#   CHAR_LITERAL <regular-expression>
+
+KEYWORD program PROGRAM
+KEYWORD procedure PROCEDURE
+KEYWORD type TYPE
+KEYWORD var VAR
+KEYWORD if IF
+KEYWORD then THEN
+KEYWORD else ELSE
+KEYWORD fi FI
+KEYWORD while WHILE
+KEYWORD do DO
+KEYWORD endwh ENDWH
+KEYWORD begin BEGIN
+KEYWORD end END
+KEYWORD read READ
+KEYWORD write WRITE
+KEYWORD array ARRAY
+KEYWORD of OF
+KEYWORD record RECORD
+KEYWORD return RETURN
+KEYWORD integer INTEGER
+KEYWORD char CHAR
+
+SYMBOL := ASSIGN
+SYMBOL .. UNDERANGE
+SYMBOL + PLUS
+SYMBOL - MINUS
+SYMBOL * TIMES
+SYMBOL / OVER
+SYMBOL < LT
+SYMBOL = EQ
+SYMBOL ( LPAREN
+SYMBOL ) RPAREN
+SYMBOL [ LMIDPAREN
+SYMBOL ] RMIDPAREN
+SYMBOL ; SEMI
+SYMBOL , COMMA
+SYMBOL . DOT
+
+COMMENT { }
+
+IDENTIFIER [A-Za-z][A-Za-z0-9]*
+INTEGER [0-9]+
+CHAR_LITERAL '[^'\n]'

@@ -1,0 +1,73 @@
+Syntax Errors
+No syntax errors.
+
+Syntax Tree
+ProK
+    PheadK codegenDemo
+    TypeK
+        DecK IntArray
+            ArrayK 1..3
+                IntegerK
+        DecK Pair
+            RecordK
+                DecK left
+                    IntegerK
+                DecK right
+                    IntegerK
+    VarK
+        DecK x
+            IntegerK
+        DecK nums
+            IdTypeK IntArray
+        DecK pair
+            IdTypeK Pair
+    ProcDecK addTo
+        ParamListK
+            ParamK var: target
+                IntegerK
+            ParamK value: delta
+                IntegerK
+        StmLK
+            StmtK Assign
+                ExpK target IdV
+                ExpK Op +
+                    ExpK target IdV
+                    ExpK delta IdV
+            StmtK Return
+                ExpK target IdV
+    StmLK
+        StmtK Assign
+            ExpK x IdV
+            ExpK Const 2
+        StmtK Assign
+            ExpK nums IdV
+                IndexK
+                    ExpK Const 1
+            ExpK Const 3
+        StmtK Assign
+            ExpK pair IdV
+                FieldK left
+            ExpK Op +
+                ExpK x IdV
+                ExpK nums IdV
+                    IndexK
+                        ExpK Const 1
+        StmtK Call
+            ExpK addTo IdV
+            ExpK pair IdV
+                FieldK left
+            ExpK Const 4
+        StmtK Write
+            ExpK pair IdV
+                FieldK left
+        StmtK If
+            ExpK Op <
+                ExpK pair IdV
+                    FieldK left
+                ExpK Const 10
+            StmLK
+                StmtK Write
+                    ExpK Const 1
+            StmLK
+                StmtK Write
+                    ExpK Const 0
