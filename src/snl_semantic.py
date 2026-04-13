@@ -13,7 +13,10 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from snl_parser import Token, load_tokens
+try:
+    from playground.snlcompiler.src.snl_parser import Token, load_tokens
+except ModuleNotFoundError:
+    from snl_parser import Token, load_tokens
 
 
 TYPE_START = {"INTEGER", "CHAR", "ARRAY", "RECORD", "ID"}

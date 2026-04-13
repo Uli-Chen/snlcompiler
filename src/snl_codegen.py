@@ -16,18 +16,32 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from snl_lexer import DEFAULT_GRAMMAR, SNLLexer, format_text, load_grammar
-from snl_parser import SNLParser, Token, format_parse_result
-from snl_semantic import (
-    BOOL,
-    CHAR,
-    INTEGER,
-    UNKNOWN,
-    ParamInfo,
-    SNLSemanticAnalyzer,
-    TypeInfo,
-    format_semantic_result,
-)
+try:
+    from playground.snlcompiler.src.snl_lexer import DEFAULT_GRAMMAR, SNLLexer, format_text, load_grammar
+    from playground.snlcompiler.src.snl_parser import SNLParser, Token, format_parse_result
+    from playground.snlcompiler.src.snl_semantic import (
+        BOOL,
+        CHAR,
+        INTEGER,
+        UNKNOWN,
+        ParamInfo,
+        SNLSemanticAnalyzer,
+        TypeInfo,
+        format_semantic_result,
+    )
+except ModuleNotFoundError:
+    from snl_lexer import DEFAULT_GRAMMAR, SNLLexer, format_text, load_grammar
+    from snl_parser import SNLParser, Token, format_parse_result
+    from snl_semantic import (
+        BOOL,
+        CHAR,
+        INTEGER,
+        UNKNOWN,
+        ParamInfo,
+        SNLSemanticAnalyzer,
+        TypeInfo,
+        format_semantic_result,
+    )
 
 
 TYPE_START = {"INTEGER", "CHAR", "ARRAY", "RECORD", "ID"}
@@ -52,6 +66,8 @@ class CGSymbol:
     params: list[ParamInfo] = field(default_factory=list)
     param_symbols: list["CGSymbol"] = field(default_factory=list)
     mode: str = ""
+    storage: str = "global"
+    offset: int = 0
 
 
 @dataclass
@@ -60,6 +76,11 @@ class CGScope:
     prefix: str
     symbols: dict[str, CGSymbol] = field(default_factory=dict)
     types: dict[str, TypeInfo] = field(default_factory=dict)
+    next_local_offset: int = 0
+
+    @property
+    def local_bytes(self) -> int:
+        return -self.next_local_offset
 
 
 @dataclass
@@ -74,6 +95,25 @@ class LValue:
     addr_reg: str
     type_info: TypeInfo
     name: str
+
+
+@dataclass
+class FrameSlot:
+    name: str
+    kind: str
+    type_text: str
+    offset: int
+    size_bytes: int
+    mode: str = ""
+
+
+@dataclass
+class FrameInfo:
+    name: str
+    label: str
+    local_bytes: int
+    param_bytes: int
+    slots: list[FrameSlot] = field(default_factory=list)
 
 
 class RegisterPool:
@@ -142,6 +182,8 @@ class SNLCodeGenerator:
         self.program = MIPSProgram()
         self.regs = RegisterPool()
         self.scopes: list[CGScope] = []
+        self.all_scopes: list[CGScope] = []
+        self.frame_infos: list[FrameInfo] = []
         self.current_proc_end: str | None = None
         self.proc_symbols: dict[str, CGSymbol] = {}
 
@@ -171,7 +213,9 @@ class SNLCodeGenerator:
 
     def enter_scope(self, name: str) -> None:
         prefix = "g" if not self.scopes else f"p_{mangle(name)}"
-        self.scopes.append(CGScope(name, prefix))
+        scope = CGScope(name, prefix)
+        self.scopes.append(scope)
+        self.all_scopes.append(scope)
 
     def leave_scope(self) -> None:
         self.scopes.pop()
@@ -293,14 +337,21 @@ class SNLCodeGenerator:
                 self.declare_storage(name, "var", type_info, line)
 
     def declare_storage(self, name: str, kind: str, type_info: TypeInfo, line: int, mode: str = "") -> CGSymbol:
-        label = f"{self.scope.prefix}_{mangle(name)}"
-        symbol = CGSymbol(name, kind, type_info, label, line, mode=mode)
+        storage = "global" if len(self.scopes) == 1 else "local"
+        if kind == "param":
+            storage = "param"
+        label = f"{self.scope.prefix}_{mangle(name)}" if storage == "global" else ""
+        symbol = CGSymbol(name, kind, type_info, label, line, mode=mode, storage=storage)
         self.declare_symbol(symbol)
-        words = type_size_words(type_info)
-        if words <= 1:
-            self.program.emit_data(f"{label}: .word 0")
+        words = max(1, type_size_words(type_info))
+        if storage == "global":
+            if words <= 1:
+                self.program.emit_data(f"{label}: .word 0")
+            else:
+                self.program.emit_data(f"{label}: .space {words * 4}")
         else:
-            self.program.emit_data(f"{label}: .space {words * 4}")
+            self.scope.next_local_offset -= words * 4
+            symbol.offset = self.scope.next_local_offset
         return symbol
 
     def parse_proc_dec(self, emit_procedure_text: bool) -> None:
@@ -322,26 +373,32 @@ class SNLCodeGenerator:
         saved_scope = self.scope
         self.enter_scope(name.sem)
         param_symbols: list[CGSymbol] = []
-        for param in params:
-            storage_type = INTEGER if param.mode == "var" else param.type_info
-            symbol = self.declare_storage(param.name, "param", storage_type, param.line, param.mode)
-            symbol.type_info = param.type_info
+        for index, param in enumerate(params):
+            symbol = CGSymbol(
+                param.name,
+                "param",
+                param.type_info,
+                "",
+                param.line,
+                mode=param.mode,
+                storage="param",
+                offset=8 + index * 4,
+            )
+            self.declare_symbol(symbol)
             param_symbols.append(symbol)
         proc_symbol.param_symbols = param_symbols
 
         proc_text_start = len(self.program.text)
-        self.program.emit(f"{label}:")
-        self.program.emit("addi $sp, $sp, -4")
-        self.program.emit("sw $ra, 0($sp)")
         proc_end = self.program.new_label(f"{label}_end")
         previous_end = self.current_proc_end
         self.current_proc_end = proc_end
         self.parse_declare_part(emit_procedure_text=True)
+        self.frame_infos.append(self.build_frame_info(name.sem, label, params, self.scope))
+        self.program.emit(f"{label}:")
+        self.emit_prologue(self.scope.local_bytes)
         self.parse_program_body()
         self.program.emit(f"{proc_end}:")
-        self.program.emit("lw $ra, 0($sp)")
-        self.program.emit("addi $sp, $sp, 4")
-        self.program.emit("jr $ra")
+        self.emit_epilogue()
         self.current_proc_end = previous_end
         self.leave_scope()
 
@@ -349,6 +406,48 @@ class SNLCodeGenerator:
         # global declarations are parsed before main is emitted.
         assert proc_text_start < len(self.program.text)
         assert saved_scope is self.scope
+
+    def build_frame_info(
+        self,
+        name: str,
+        label: str,
+        params: list[ParamInfo],
+        scope: CGScope,
+    ) -> FrameInfo:
+        slots = [
+            FrameSlot("saved_fp", "runtime", "word", 0, 4),
+            FrameSlot("saved_ra", "runtime", "word", 4, 4),
+        ]
+        for index, param in enumerate(params):
+            slots.append(
+                FrameSlot(
+                    param.name,
+                    "param",
+                    param.type_info.display(),
+                    8 + index * 4,
+                    4,
+                    param.mode,
+                )
+            )
+        for symbol in scope.symbols.values():
+            if symbol.storage == "local":
+                slots.append(
+                    FrameSlot(
+                        symbol.name,
+                        "local",
+                        symbol.type_info.display(),
+                        symbol.offset,
+                        type_size_words(symbol.type_info) * 4,
+                        symbol.mode,
+                    )
+                )
+        return FrameInfo(
+            name=name,
+            label=label,
+            local_bytes=scope.local_bytes,
+            param_bytes=len(params) * 4,
+            slots=slots,
+        )
 
     def parse_param_list(self) -> list[ParamInfo]:
         params: list[ParamInfo] = []
@@ -366,6 +465,21 @@ class SNLCodeGenerator:
             self.advance()
         type_info = self.parse_type_name()
         return [ParamInfo(name, mode, type_info, line) for name, line in self.parse_id_list()]
+
+    def emit_prologue(self, local_bytes: int) -> None:
+        self.program.emit("addi $sp, $sp, -8")
+        self.program.emit("sw $fp, 0($sp)")
+        self.program.emit("sw $ra, 4($sp)")
+        self.program.emit("move $fp, $sp")
+        if local_bytes:
+            self.program.emit(f"addi $sp, $sp, -{local_bytes}")
+
+    def emit_epilogue(self) -> None:
+        self.program.emit("move $sp, $fp")
+        self.program.emit("lw $fp, 0($sp)")
+        self.program.emit("lw $ra, 4($sp)")
+        self.program.emit("addi $sp, $sp, 8")
+        self.program.emit("jr $ra")
 
     def parse_program_body(self) -> None:
         self.expect("BEGIN")
@@ -413,25 +527,29 @@ class SNLCodeGenerator:
         symbol = self.lookup_symbol(name.sem)
         self.expect("LPAREN")
         actual_index = 0
+        actual_regs: list[str] = []
         if not self.at("RPAREN"):
             while True:
-                formal_symbol = symbol.param_symbols[actual_index]
                 formal_info = symbol.params[actual_index]
                 if formal_info.mode == "var":
                     actual_name = self.expect("ID")
                     actual = self.finish_lvalue(actual_name)
-                    self.program.emit(f"sw {actual.addr_reg}, {formal_symbol.label}")
-                    self.regs.free(actual.addr_reg)
+                    actual_regs.append(actual.addr_reg)
                 else:
                     actual_expr = self.parse_exp()
-                    self.program.emit(f"sw {actual_expr.reg}, {formal_symbol.label}")
-                    self.regs.free(actual_expr.reg)
+                    actual_regs.append(actual_expr.reg)
                 actual_index += 1
                 if not self.at("COMMA"):
                     break
                 self.advance()
         self.expect("RPAREN")
+        for reg in reversed(actual_regs):
+            self.program.emit("addi $sp, $sp, -4")
+            self.program.emit(f"sw {reg}, 0($sp)")
+            self.regs.free(reg)
         self.program.emit(f"jal {symbol.label}")
+        if actual_regs:
+            self.program.emit(f"addi $sp, $sp, {len(actual_regs) * 4}")
 
     def parse_if(self) -> None:
         self.expect("IF")
@@ -563,10 +681,12 @@ class SNLCodeGenerator:
     def finish_lvalue(self, name: Token) -> LValue:
         symbol = self.lookup_symbol(name.sem)
         addr = self.regs.alloc()
-        if symbol.kind == "param" and symbol.mode == "var":
-            self.program.emit(f"lw {addr}, {symbol.label}")
-        else:
+        if symbol.storage == "global":
             self.program.emit(f"la {addr}, {symbol.label}")
+        elif symbol.storage == "param" and symbol.mode == "var":
+            self.program.emit(f"lw {addr}, {symbol.offset}($fp)")
+        else:
+            self.program.emit(f"addi {addr}, $fp, {symbol.offset}")
         type_info = symbol.type_info
 
         if self.at("LMIDPAREN"):
@@ -635,11 +755,15 @@ class MIPSRunner:
         self.output: list[str] = []
         self.regs: dict[str, int] = {name: 0 for name in self.register_names()}
         self.regs["$sp"] = 0x7FFFEFFC
+        self.regs["$fp"] = self.regs["$sp"]
         self.regs["$zero"] = 0
         self.memory: dict[int, int] = {}
         self.data_labels: dict[str, int] = {}
         self.text_labels: dict[str, int] = {}
         self.instructions: list[str] = []
+        self.call_stack: list[str] = []
+        self.call_events: list[dict[str, int | str]] = []
+        self.max_call_depth = 0
         self.parse_assembly()
 
     @staticmethod
@@ -648,7 +772,7 @@ class MIPSRunner:
             ["$zero", "$at", "$v0", "$v1", "$a0", "$a1", "$a2", "$a3"]
             + [f"$t{i}" for i in range(10)]
             + [f"$s{i}" for i in range(8)]
-            + ["$sp", "$ra"]
+            + ["$sp", "$fp", "$ra"]
         )
 
     def parse_assembly(self) -> None:
@@ -747,9 +871,31 @@ class MIPSRunner:
             elif op == "j":
                 next_pc = self.text_labels[args[0]]
             elif op == "jal":
+                self.call_stack.append(args[0])
+                self.max_call_depth = max(self.max_call_depth, len(self.call_stack))
+                self.call_events.append(
+                    {
+                        "event": "call",
+                        "target": args[0],
+                        "depth": len(self.call_stack),
+                        "sp": self.reg("$sp"),
+                        "fp": self.reg("$fp"),
+                    }
+                )
                 self.set_reg("$ra", next_pc)
                 next_pc = self.text_labels[args[0]]
             elif op == "jr":
+                if args[0] == "$ra":
+                    target = self.call_stack.pop() if self.call_stack else "<unknown>"
+                    self.call_events.append(
+                        {
+                            "event": "return",
+                            "target": target,
+                            "depth": len(self.call_stack),
+                            "sp": self.reg("$sp"),
+                            "fp": self.reg("$fp"),
+                        }
+                    )
                 next_pc = self.reg(args[0])
             elif op == "syscall":
                 if self.handle_syscall():

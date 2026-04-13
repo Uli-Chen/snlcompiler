@@ -1,0 +1,11 @@
+Front End
+No lexical, syntax, or semantic errors.
+
+MIPS Assembly
+playground/snlcompiler/test/out/complex_calls_test/complex_calls_test.asm
+
+Program Output
+8
+120
+128
+256
