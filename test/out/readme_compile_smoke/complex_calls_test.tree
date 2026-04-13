@@ -1,0 +1,234 @@
+Syntax Errors
+No syntax errors.
+
+Syntax Tree
+ProK
+    PheadK complexCalls
+    TypeK
+        DecK IntArray
+            ArrayK 1..4
+                IntegerK
+        DecK Report
+            RecordK
+                DecK fibValue, factValue, totalValue, scaledValue
+                    IntegerK
+    VarK
+        DecK n, fibResult, factResult, total, scaled
+            IntegerK
+        DecK values
+            IdTypeK IntArray
+        DecK report
+            IdTypeK Report
+    ProcDecK add
+        ParamListK
+            ParamK value: a
+                IntegerK
+            ParamK value: b
+                IntegerK
+            ParamK var: out
+                IntegerK
+        StmLK
+            StmtK Assign
+                ExpK out IdV
+                ExpK Op +
+                    ExpK a IdV
+                    ExpK b IdV
+            StmtK Return
+                ExpK out IdV
+    ProcDecK scale
+        ParamListK
+            ParamK value: value
+                IntegerK
+            ParamK value: factor
+                IntegerK
+            ParamK var: out
+                IntegerK
+        StmLK
+            StmtK Assign
+                ExpK out IdV
+                ExpK Op *
+                    ExpK value IdV
+                    ExpK factor IdV
+            StmtK Return
+                ExpK out IdV
+    ProcDecK factorial
+        ParamListK
+            ParamK value: n
+                IntegerK
+            ParamK var: out
+                IntegerK
+        VarK
+            DecK sub
+                IntegerK
+        StmLK
+            StmtK If
+                ExpK Op <
+                    ExpK n IdV
+                    ExpK Const 2
+                StmLK
+                    StmtK Assign
+                        ExpK out IdV
+                        ExpK Const 1
+                StmLK
+                    StmtK Call
+                        ExpK factorial IdV
+                        ExpK Op -
+                            ExpK n IdV
+                            ExpK Const 1
+                        ExpK sub IdV
+                    StmtK Assign
+                        ExpK out IdV
+                        ExpK Op *
+                            ExpK n IdV
+                            ExpK sub IdV
+            StmtK Return
+                ExpK out IdV
+    ProcDecK fib
+        ParamListK
+            ParamK value: n
+                IntegerK
+            ParamK var: out
+                IntegerK
+        VarK
+            DecK left, right
+                IntegerK
+        StmLK
+            StmtK If
+                ExpK Op <
+                    ExpK n IdV
+                    ExpK Const 2
+                StmLK
+                    StmtK Assign
+                        ExpK out IdV
+                        ExpK n IdV
+                StmLK
+                    StmtK Call
+                        ExpK fib IdV
+                        ExpK Op -
+                            ExpK n IdV
+                            ExpK Const 1
+                        ExpK left IdV
+                    StmtK Call
+                        ExpK fib IdV
+                        ExpK Op -
+                            ExpK n IdV
+                            ExpK Const 2
+                        ExpK right IdV
+                    StmtK Call
+                        ExpK add IdV
+                        ExpK left IdV
+                        ExpK right IdV
+                        ExpK out IdV
+            StmtK Return
+                ExpK out IdV
+    ProcDecK storeReport
+        ParamListK
+            ParamK value: fibIn
+                IntegerK
+            ParamK value: factIn
+                IntegerK
+            ParamK value: totalIn
+                IntegerK
+            ParamK value: scaledIn
+                IntegerK
+            ParamK var: dst
+                IdTypeK Report
+        StmLK
+            StmtK Assign
+                ExpK dst IdV
+                    FieldK fibValue
+                ExpK fibIn IdV
+            StmtK Assign
+                ExpK dst IdV
+                    FieldK factValue
+                ExpK factIn IdV
+            StmtK Assign
+                ExpK dst IdV
+                    FieldK totalValue
+                ExpK totalIn IdV
+            StmtK Assign
+                ExpK dst IdV
+                    FieldK scaledValue
+                ExpK scaledIn IdV
+            StmtK Return
+                ExpK totalIn IdV
+    ProcDecK printReport
+        ParamListK
+            ParamK var: src
+                IdTypeK Report
+        StmLK
+            StmtK Write
+                ExpK src IdV
+                    FieldK fibValue
+            StmtK Write
+                ExpK src IdV
+                    FieldK factValue
+            StmtK Write
+                ExpK src IdV
+                    FieldK totalValue
+            StmtK Write
+                ExpK src IdV
+                    FieldK scaledValue
+            StmtK Return
+                ExpK src IdV
+                    FieldK scaledValue
+    StmLK
+        StmtK Assign
+            ExpK n IdV
+            ExpK Const 6
+        StmtK Call
+            ExpK fib IdV
+            ExpK n IdV
+            ExpK fibResult IdV
+        StmtK Call
+            ExpK factorial IdV
+            ExpK Const 5
+            ExpK factResult IdV
+        StmtK Call
+            ExpK add IdV
+            ExpK fibResult IdV
+            ExpK factResult IdV
+            ExpK total IdV
+        StmtK Call
+            ExpK scale IdV
+            ExpK total IdV
+            ExpK Const 2
+            ExpK scaled IdV
+        StmtK Assign
+            ExpK values IdV
+                IndexK
+                    ExpK Const 1
+            ExpK fibResult IdV
+        StmtK Assign
+            ExpK values IdV
+                IndexK
+                    ExpK Const 2
+            ExpK factResult IdV
+        StmtK Assign
+            ExpK values IdV
+                IndexK
+                    ExpK Const 3
+            ExpK total IdV
+        StmtK Assign
+            ExpK values IdV
+                IndexK
+                    ExpK Const 4
+            ExpK scaled IdV
+        StmtK Call
+            ExpK storeReport IdV
+            ExpK values IdV
+                IndexK
+                    ExpK Const 1
+            ExpK values IdV
+                IndexK
+                    ExpK Const 2
+            ExpK values IdV
+                IndexK
+                    ExpK Const 3
+            ExpK values IdV
+                IndexK
+                    ExpK Const 4
+            ExpK report IdV
+        StmtK Call
+            ExpK printReport IdV
+            ExpK report IdV

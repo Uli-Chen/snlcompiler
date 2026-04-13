@@ -1,0 +1,83 @@
+LineShow  Lex          Sem
+--------  -----------  ---
+1         PROGRAM      
+1         ID           recursiveFrame
+3         VAR          
+4         INTEGER      
+4         ID           result
+4         SEMI         
+6         PROCEDURE    
+6         ID           mirrorSum
+6         LPAREN       
+6         INTEGER      
+6         ID           n
+6         SEMI         
+6         VAR          
+6         INTEGER      
+6         ID           acc
+6         RPAREN       
+6         SEMI         
+7         VAR          
+8         INTEGER      
+8         ID           local
+8         SEMI         
+9         BEGIN        
+10        ID           local
+10        ASSIGN       
+10        ID           n
+10        SEMI         
+11        IF           
+11        ID           local
+11        LT           
+11        INTC         1
+11        THEN         
+12        ID           acc
+12        ASSIGN       
+12        ID           acc
+13        ELSE         
+14        ID           acc
+14        ASSIGN       
+14        ID           acc
+14        PLUS         
+14        ID           local
+14        SEMI         
+15        ID           mirrorSum
+15        LPAREN       
+15        ID           local
+15        MINUS        
+15        INTC         1
+15        COMMA        
+15        ID           acc
+15        RPAREN       
+15        SEMI         
+16        ID           acc
+16        ASSIGN       
+16        ID           acc
+16        PLUS         
+16        ID           local
+17        FI           
+17        SEMI         
+18        RETURN       
+18        LPAREN       
+18        ID           acc
+18        RPAREN       
+19        END          
+21        BEGIN        
+22        ID           result
+22        ASSIGN       
+22        INTC         0
+22        SEMI         
+23        ID           mirrorSum
+23        LPAREN       
+23        INTC         3
+23        COMMA        
+23        ID           result
+23        RPAREN       
+23        SEMI         
+24        WRITE        
+24        LPAREN       
+24        ID           result
+24        RPAREN       
+25        END          
+25        DOT          
+26        EOF          

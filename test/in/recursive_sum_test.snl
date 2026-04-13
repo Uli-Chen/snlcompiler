@@ -1,0 +1,21 @@
+program recursiveSum
+
+var
+  integer result;
+
+procedure sumTo(integer n; var integer acc);
+begin
+  if n < 1 then
+    acc := acc
+  else
+    acc := acc + n;
+    sumTo(n - 1, acc)
+  fi;
+  return(acc)
+end
+
+begin
+  result := 0;
+  sumTo(5, result);
+  write(result)
+end.

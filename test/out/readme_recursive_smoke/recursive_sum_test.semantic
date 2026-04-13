@@ -1,0 +1,15 @@
+Semantic Errors
+No semantic errors.
+
+Symbol Tables
+Scope #0 global level=0 parent=-
+  Kind       Name             Type                                      Other
+  ---------  ---------------  ----------------------------------------  ----------------
+  program    recursiveSum     unknown                                   
+  var        result           integer                                   
+  procedure  sumTo            procedure(value n: integer, var acc: integer)  params=2
+Scope #1 procedure sumTo level=1 parent=0
+  Kind       Name             Type                                      Other
+  ---------  ---------------  ----------------------------------------  ----------------
+  param      n                integer                                   mode=value
+  param      acc              integer                                   mode=var

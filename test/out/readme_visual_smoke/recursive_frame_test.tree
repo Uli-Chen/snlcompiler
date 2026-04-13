@@ -1,0 +1,59 @@
+Syntax Errors
+No syntax errors.
+
+Syntax Tree
+ProK
+    PheadK recursiveFrame
+    VarK
+        DecK result
+            IntegerK
+    ProcDecK mirrorSum
+        ParamListK
+            ParamK value: n
+                IntegerK
+            ParamK var: acc
+                IntegerK
+        VarK
+            DecK local
+                IntegerK
+        StmLK
+            StmtK Assign
+                ExpK local IdV
+                ExpK n IdV
+            StmtK If
+                ExpK Op <
+                    ExpK local IdV
+                    ExpK Const 1
+                StmLK
+                    StmtK Assign
+                        ExpK acc IdV
+                        ExpK acc IdV
+                StmLK
+                    StmtK Assign
+                        ExpK acc IdV
+                        ExpK Op +
+                            ExpK acc IdV
+                            ExpK local IdV
+                    StmtK Call
+                        ExpK mirrorSum IdV
+                        ExpK Op -
+                            ExpK local IdV
+                            ExpK Const 1
+                        ExpK acc IdV
+                    StmtK Assign
+                        ExpK acc IdV
+                        ExpK Op +
+                            ExpK acc IdV
+                            ExpK local IdV
+            StmtK Return
+                ExpK acc IdV
+    StmLK
+        StmtK Assign
+            ExpK result IdV
+            ExpK Const 0
+        StmtK Call
+            ExpK mirrorSum IdV
+            ExpK Const 3
+            ExpK result IdV
+        StmtK Write
+            ExpK result IdV

@@ -1,0 +1,25 @@
+program recursiveFrame
+
+var
+  integer result;
+
+procedure mirrorSum(integer n; var integer acc);
+var
+  integer local;
+begin
+  local := n;
+  if local < 1 then
+    acc := acc
+  else
+    acc := acc + local;
+    mirrorSum(local - 1, acc);
+    acc := acc + local
+  fi;
+  return(acc)
+end
+
+begin
+  result := 0;
+  mirrorSum(3, result);
+  write(result)
+end.
