@@ -1,0 +1,19 @@
+program arrayAssignment
+
+type
+  IntArray = array [1..3] of integer;
+
+var
+  IntArray src, dst;
+
+begin
+  src[1] := 4;
+  src[2] := 6;
+  src[3] := 8;
+  dst := src;
+  dst[1] := 99;
+  write(src[1]);
+  write(src[2]);
+  write(dst[1]);
+  write(dst[3])
+end.

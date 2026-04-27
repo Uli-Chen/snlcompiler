@@ -1,0 +1,20 @@
+program recordAssignment
+
+type
+  Pair = record
+    integer left, right;
+  end;
+
+var
+  Pair a, b;
+
+begin
+  a.left := 1;
+  a.right := 2;
+  b := a;
+  b.left := 9;
+  write(a.left);
+  write(a.right);
+  write(b.left);
+  write(b.right)
+end.

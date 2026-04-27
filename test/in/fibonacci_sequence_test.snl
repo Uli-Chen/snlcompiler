@@ -1,0 +1,38 @@
+program fibonacciSequence
+
+type
+  FibArray = array [1..10] of integer;
+
+var
+  integer n, i, current;
+  FibArray seq;
+
+procedure fib(integer k; var integer out);
+var
+  integer left, right;
+begin
+  if k < 2 then
+    out := k
+  else
+    fib(k - 1, left);
+    fib(k - 2, right);
+    out := left + right
+  fi;
+  return(out)
+end
+
+begin
+  read(n);
+  if n < 11 then
+    n := n
+  else
+    n := 10
+  fi;
+  i := 0;
+  while i < n do
+    fib(i, current);
+    seq[i + 1] := current;
+    write(current);
+    i := i + 1
+  endwh
+end.

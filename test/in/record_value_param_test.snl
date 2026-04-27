@@ -1,0 +1,26 @@
+program recordValueParam
+
+type
+  Pair = record
+    integer left, right;
+  end;
+
+var
+  Pair pair;
+
+procedure bump(Pair value);
+begin
+  value.left := value.left + 10;
+  value.right := value.right + 20;
+  write(value.left);
+  write(value.right);
+  return(value.left)
+end
+
+begin
+  pair.left := 7;
+  pair.right := 9;
+  bump(pair);
+  write(pair.left);
+  write(pair.right)
+end.

@@ -1,0 +1,7 @@
+{测试常量数组下标越界}
+program arrayBoundsError
+var
+  array [1..5] of integer a;
+begin
+  a[0] := 10
+end.

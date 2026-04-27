@@ -1,0 +1,31 @@
+program deepNestedCapture
+
+var
+  integer result;
+
+procedure outer(integer seed; var integer out);
+var
+  integer local;
+
+  procedure middle(integer step);
+    procedure inner(integer extra);
+    begin
+      out := local + seed + step + extra;
+      return(out)
+    end
+  begin
+    inner(4);
+    return(out)
+  end
+
+begin
+  local := 3;
+  out := 0;
+  middle(2);
+  write(out)
+end
+
+begin
+  result := 0;
+  outer(1, result)
+end.

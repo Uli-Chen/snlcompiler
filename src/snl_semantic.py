@@ -13,10 +13,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-try:
-    from playground.snlcompiler.src.snl_parser import Token, load_tokens
-except ModuleNotFoundError:
-    from snl_parser import Token, load_tokens
+from snl_parser import Token, load_tokens
 
 
 TYPE_START = {"INTEGER", "CHAR", "ARRAY", "RECORD", "ID"}
@@ -99,7 +96,7 @@ class Scope:
 
 @dataclass
 class ExprInfo:
-    type_info: TypeInfo = UNKNOWN
+    type_info: TypeInfo = field(default_factory=lambda: UNKNOWN)
     assignable: bool = False
     const_int: int | None = None
     name: str = ""
@@ -458,13 +455,23 @@ class SNLSemanticAnalyzer:
     def parse_output_stm(self) -> None:
         self.expect("WRITE")
         self.expect("LPAREN")
-        self.parse_exp()
+        expr = self.parse_exp()
+        if expr.type_info.kind not in {"integer", "char", "bool", "unknown"}:
+            self.error(
+                self.current,
+                f"write expression must be scalar, got {expr.type_info.display()}",
+            )
         self.expect("RPAREN")
 
     def parse_return_stm(self) -> None:
         self.expect("RETURN")
         self.expect("LPAREN")
-        self.parse_exp()
+        expr = self.parse_exp()
+        if expr.type_info.kind not in {"integer", "char", "bool", "unknown"}:
+            self.error(
+                self.current,
+                f"return expression must be scalar, got {expr.type_info.display()}",
+            )
         self.expect("RPAREN")
 
     def parse_act_param_list(self) -> list[ExprInfo]:

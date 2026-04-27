@@ -1,0 +1,20 @@
+program nestedParamCapture
+
+var
+  integer result;
+
+procedure outer(integer base; var integer out);
+  procedure inner(integer extra);
+  begin
+    out := base + extra;
+    return(out)
+  end
+begin
+  inner(4);
+  write(out)
+end
+
+begin
+  result := 0;
+  outer(5, result)
+end.

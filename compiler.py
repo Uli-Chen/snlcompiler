@@ -19,6 +19,7 @@ from src.snl_lexer import DEFAULT_GRAMMAR, SNLLexer, format_text, load_grammar
 from src.snl_parser import SNLParser, format_parse_result, load_tokens
 from src.snl_semantic import SNLSemanticAnalyzer, format_semantic_result
 from src.snl_visualize import visualize_source
+from src.snl_web import serve_web
 
 
 def default_out_dir(source: Path, kind: str) -> Path:
@@ -72,6 +73,7 @@ def command_compile(args: argparse.Namespace) -> int:
         out_dir,
         list(args.input),
         run_target=not args.no_run,
+        max_steps=args.max_steps,
     )
     if args.asm:
         args.asm.parent.mkdir(parents=True, exist_ok=True)
@@ -82,11 +84,16 @@ def command_compile(args: argparse.Namespace) -> int:
 
 def command_visualize(args: argparse.Namespace) -> int:
     out_dir = args.out_dir or default_out_dir(args.source, "visual")
-    generated = visualize_source(args.source, out_dir, list(args.input))
+    generated = visualize_source(args.source, out_dir, list(args.input), max_steps=args.max_steps)
     print(f"Visualization index: {generated['Index']}")
     for label, path in generated.items():
         if label != "Index":
             print(f"{label}: {path}")
+    return 0
+
+
+def command_web(args: argparse.Namespace) -> int:
+    serve_web(PROJECT_ROOT, args.host, args.port)
     return 0
 
 
@@ -119,13 +126,20 @@ def build_parser() -> argparse.ArgumentParser:
     compile_cmd.add_argument("--input", nargs="*", default=[], help="input values consumed by READ")
     compile_cmd.add_argument("--asm", type=Path, help="also write assembly to this explicit path")
     compile_cmd.add_argument("--no-run", action="store_true", help="generate assembly without running MIPS")
+    compile_cmd.add_argument("--max-steps", type=int, default=100000, help="maximum MIPS instructions to execute")
     compile_cmd.set_defaults(func=command_compile)
 
     visualize = subcommands.add_parser("visualize", help="generate compiler side-information visualizations")
     visualize.add_argument("source", type=Path, help="SNL source file")
     visualize.add_argument("--out-dir", type=Path, help="directory for HTML/SVG/JSON outputs")
     visualize.add_argument("--input", nargs="*", default=[], help="input values consumed by READ")
+    visualize.add_argument("--max-steps", type=int, default=100000, help="maximum MIPS instructions to execute")
     visualize.set_defaults(func=command_visualize)
+
+    web = subcommands.add_parser("web", help="run the local web playground")
+    web.add_argument("--host", default="127.0.0.1", help="host to bind the web server")
+    web.add_argument("--port", type=int, default=8000, help="port to bind the web server")
+    web.set_defaults(func=command_web)
 
     return parser
 

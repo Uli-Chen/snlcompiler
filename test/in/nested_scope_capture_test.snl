@@ -1,0 +1,27 @@
+program nestedScopeCapture
+
+var
+  integer result;
+
+procedure outer(var integer out);
+var
+  integer seed;
+
+  procedure inner(integer delta);
+  begin
+    seed := seed + delta;
+    out := seed;
+    return(out)
+  end
+
+begin
+  seed := 1;
+  out := 0;
+  inner(2);
+  write(out)
+end
+
+begin
+  result := 0;
+  outer(result)
+end.

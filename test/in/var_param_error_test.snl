@@ -1,0 +1,11 @@
+{测试 var 参数传入非左值}
+program varParamError
+var
+  integer result;
+procedure inc(var integer x);
+begin
+  x := x + 1
+end
+begin
+  inc(42)
+end.

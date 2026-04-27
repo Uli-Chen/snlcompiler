@@ -222,31 +222,33 @@ end.
 
 90. Factor ::= INTC
 
-91. Factor ::= Variable
+91. Factor ::= CHARC
 
-92. Variable ::= ID VariMore
+92. Factor ::= Variable
 
-93. VariMore ::= ε
+93. Variable ::= ID VariMore
 
-94. VariMore ::= [ Exp ]
+94. VariMore ::= ε
 
-95. VariMore ::= . FieldVar
+95. VariMore ::= [ Exp ]
 
-96. FieldVar ::= ID FieldVarMore
+96. VariMore ::= . FieldVar
 
-97. FieldVarMore ::= ε
+97. FieldVar ::= ID FieldVarMore
 
-98. FieldVarMore ::= [ Exp ]
+98. FieldVarMore ::= ε
 
-99. CmpOp ::= <
+99. FieldVarMore ::= [ Exp ]
 
-100. CmpOp ::= =
+100. CmpOp ::= <
 
-101. AddOp ::= +
+101. CmpOp ::= =
 
-102. AddOp ::= -
+102. AddOp ::= +
 
-103. MultOp ::= *
+103. AddOp ::= -
 
-104. MultOp ::= /
+104. MultOp ::= *
+
+105. MultOp ::= /
 ```

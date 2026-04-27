@@ -1,0 +1,11 @@
+{测试过程调用实参数量不匹配}
+program paramCountError
+var
+  integer a;
+procedure add(integer x; integer y);
+begin
+  a := x + y
+end
+begin
+  add(1)
+end.

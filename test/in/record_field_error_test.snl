@@ -1,0 +1,12 @@
+{测试记录域不存在}
+program recordFieldError
+type
+  myRec = record
+    integer x;
+    integer y;
+  end;
+var
+  myRec r;
+begin
+  r.z := 10
+end.

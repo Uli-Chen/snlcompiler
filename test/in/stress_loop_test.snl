@@ -1,0 +1,15 @@
+program stressLoop
+
+var
+  integer i, limit, total;
+
+begin
+  i := 0;
+  limit := 2000;
+  total := 0;
+  while i < limit do
+    total := total + 1;
+    i := i + 1
+  endwh;
+  write(total)
+end.
