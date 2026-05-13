@@ -1,0 +1,16 @@
+program syntaxBad
+
+var
+  integer x
+  char c;
+
+begin
+  x := 1 + ;
+  if x < 10
+    write(x)
+  fi;
+  while x < 10
+    x := x + 1
+  endwh;
+  write(x
+end.

@@ -1,0 +1,10 @@
+program divZeroBad
+
+var
+  integer x;
+
+begin
+  x := 10 / 0;
+  x := 1 / (2 - 2);
+  write(x)
+end.

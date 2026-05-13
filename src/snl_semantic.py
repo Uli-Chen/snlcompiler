@@ -333,6 +333,9 @@ class SNLSemanticAnalyzer:
                     self.error(expr.line, f"left operand of '{expr.op}' must be integer")
                 if right.kind not in {"integer", "unknown"}:
                     self.error(expr.line, f"right operand of '{expr.op}' must be integer")
+                if expr.op == "/" and expr.right is not None and expr.right.const_int == 0:
+                    self.error(expr.line, "constant division by zero")
+                expr.const_int = fold_const_int(expr.op, expr.left, expr.right)
                 expr.type_info = INTEGER
                 return INTEGER
             if expr.op in {"<", "="}:
@@ -437,6 +440,22 @@ class SNLSemanticAnalyzer:
 
 def is_aggregate(type_info: TypeInfo) -> bool:
     return type_info.kind in {"array", "record"}
+
+
+def fold_const_int(op: str, left: Expr | None, right: Expr | None) -> int | None:
+    if left is None or right is None:
+        return None
+    if left.const_int is None or right.const_int is None:
+        return None
+    if op == "+":
+        return left.const_int + right.const_int
+    if op == "-":
+        return left.const_int - right.const_int
+    if op == "*":
+        return left.const_int * right.const_int
+    if op == "/" and right.const_int != 0:
+        return int(left.const_int / right.const_int)
+    return None
 
 
 def same_type(left: TypeInfo, right: TypeInfo) -> bool:

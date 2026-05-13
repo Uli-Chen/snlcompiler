@@ -19,9 +19,54 @@ from typing import Literal
 TYPE_START = {"INTEGER", "CHAR", "ARRAY", "RECORD", "ID"}
 FIELD_TYPE_START = {"INTEGER", "CHAR", "ARRAY"}
 STMT_START = {"IF", "WHILE", "READ", "WRITE", "RETURN", "ID"}
+DECL_START = {"TYPE", "VAR", "PROCEDURE", "BEGIN"}
+EXPR_START = {"LPAREN", "INTC", "CHARC", "ID"}
+EXPR_FOLLOW = {"SEMI", "COMMA", "RPAREN", "RMIDPAREN", "THEN", "DO", "ELSE", "FI", "ENDWH", "END", "EOF"}
 ADD_OPS = {"PLUS": "+", "MINUS": "-"}
 MULT_OPS = {"TIMES": "*", "OVER": "/"}
 CMP_OPS = {"LT": "<", "EQ": "="}
+TOKEN_DISPLAY = {
+    "PROGRAM": "program",
+    "TYPE": "type",
+    "VAR": "var",
+    "PROCEDURE": "procedure",
+    "BEGIN": "begin",
+    "END": "end",
+    "IF": "if",
+    "THEN": "then",
+    "ELSE": "else",
+    "FI": "fi",
+    "WHILE": "while",
+    "DO": "do",
+    "ENDWH": "endwh",
+    "READ": "read",
+    "WRITE": "write",
+    "RETURN": "return",
+    "INTEGER": "integer",
+    "CHAR": "char",
+    "ARRAY": "array",
+    "RECORD": "record",
+    "OF": "of",
+    "ID": "identifier",
+    "INTC": "integer constant",
+    "CHARC": "character constant",
+    "ASSIGN": ":=",
+    "EQ": "=",
+    "LT": "<",
+    "PLUS": "+",
+    "MINUS": "-",
+    "TIMES": "*",
+    "OVER": "/",
+    "LPAREN": "(",
+    "RPAREN": ")",
+    "LMIDPAREN": "[",
+    "RMIDPAREN": "]",
+    "UNDERANGE": "..",
+    "SEMI": ";",
+    "COMMA": ",",
+    "DOT": ".",
+    "EOF": "end of file",
+}
 
 
 @dataclass(frozen=True)
@@ -249,34 +294,59 @@ class SNLParser:
     def at(self, *lex_types: str) -> bool:
         return self.current.lex in lex_types
 
+    def peek(self, offset: int = 1) -> Token:
+        index = min(self.index + offset, len(self.tokens) - 1)
+        return self.tokens[index]
+
     def advance(self) -> Token:
         token = self.current
         if self.index < len(self.tokens) - 1:
             self.index += 1
         return token
 
-    def expect(self, lex_type: str) -> Token:
+    def expect(
+        self,
+        lex_type: str,
+        *,
+        context: str = "",
+        recover_to: set[str] | None = None,
+    ) -> Token:
         if self.current.lex == lex_type:
             return self.advance()
         token = self.current
-        self.error(f"expected {lex_type}, found {token.display()}")
+        detail = f"expected {self.token_name(lex_type)}"
+        if context:
+            detail += f" {context}"
+        detail += f", found {token.display()}"
+        self.error_at(token.line, "missing-token", detail)
+        if recover_to is not None and token.lex not in recover_to:
+            self.recover({lex_type} | recover_to)
+            if self.current.lex == lex_type:
+                return self.advance()
         return Token(token.line, lex_type)
 
     def error(self, message: str) -> None:
-        self.errors.append(f"line {self.current.line}: {message}")
+        self.error_at(self.current.line, "syntax", message)
+
+    def error_at(self, line: int, kind: str, message: str) -> None:
+        self.errors.append(f"line {line}: {kind}: {message}")
+
+    @staticmethod
+    def token_name(lex_type: str) -> str:
+        return TOKEN_DISPLAY.get(lex_type, lex_type)
 
     def parse(self) -> Program:
         program = self.parse_program()
         if not self.at("EOF"):
-            self.error(f"unexpected token after program end: {self.current.display()}")
+            self.error_at(self.current.line, "unexpected-token", f"unexpected token after program end: {self.current.display()}")
         return program
 
     def parse_program(self) -> Program:
-        self.expect("PROGRAM")
-        name = self.expect("ID")
+        self.expect("PROGRAM", context="at start of program", recover_to={"ID", *DECL_START, "EOF"})
+        name = self.expect("ID", context="as program name", recover_to=DECL_START | {"EOF"})
         type_decls, var_decls, proc_decls = self.parse_declare_part()
         body = self.parse_program_body()
-        self.expect("DOT")
+        self.expect("DOT", context="after program body", recover_to={"EOF"})
         return Program(name.sem, name.line, type_decls, var_decls, proc_decls, body)
 
     def parse_declare_part(self) -> tuple[list[TypeDecl], list[VarDecl], list[ProcDecl]]:
@@ -287,11 +357,17 @@ class SNLParser:
         if not self.at("TYPE"):
             return decls
         self.advance()
-        while self.at("ID"):
+        if not self.at("ID"):
+            self.error_at(self.current.line, "missing-declaration", "expected at least one type declaration after type")
+        while not self.at("EOF", "VAR", "PROCEDURE", "BEGIN"):
+            if not self.at("ID"):
+                self.error_at(self.current.line, "unexpected-token", f"expected type identifier in type declaration, found {self.current.display()}")
+                self.recover({"ID", "VAR", "PROCEDURE", "BEGIN", "EOF"})
+                continue
             name = self.advance()
-            self.expect("EQ")
+            self.expect("EQ", context=f"after type identifier '{name.sem}'", recover_to=TYPE_START | {"SEMI", "VAR", "PROCEDURE", "BEGIN", "EOF"})
             type_node = self.parse_type_name()
-            self.expect("SEMI")
+            self.expect("SEMI", context=f"after type declaration '{name.sem}'", recover_to={"ID", "VAR", "PROCEDURE", "BEGIN", "EOF"})
             decls.append(TypeDecl(name.sem, type_node, name.line))
         return decls
 
@@ -311,18 +387,18 @@ class SNLParser:
             self.advance()
             return TypeNode("alias", token.line, name=token.sem)
 
-        self.error(f"expected type name, found {token.display()}")
+        self.error_at(token.line, "missing-type", f"expected type name, found {token.display()}")
         self.recover(TYPE_START | {"SEMI", "RPAREN", "BEGIN", "PROCEDURE", "EOF"})
         return TypeNode("unknown", token.line)
 
     def parse_array_type(self) -> TypeNode:
         start = self.expect("ARRAY")
-        self.expect("LMIDPAREN")
-        low = self.expect("INTC")
-        self.expect("UNDERANGE")
-        high = self.expect("INTC")
-        self.expect("RMIDPAREN")
-        self.expect("OF")
+        self.expect("LMIDPAREN", context="after array", recover_to={"INTC", "UNDERANGE", "RMIDPAREN", "OF", "SEMI", "EOF"})
+        low = self.expect("INTC", context="as array lower bound", recover_to={"UNDERANGE", "INTC", "RMIDPAREN", "OF", "SEMI", "EOF"})
+        self.expect("UNDERANGE", context="between array bounds", recover_to={"INTC", "RMIDPAREN", "OF", "SEMI", "EOF"})
+        high = self.expect("INTC", context="as array upper bound", recover_to={"RMIDPAREN", "OF", "SEMI", "EOF"})
+        self.expect("RMIDPAREN", context="after array upper bound", recover_to={"OF", "SEMI", "EOF"})
+        self.expect("OF", context="after array bounds", recover_to={"INTEGER", "CHAR", "SEMI", "EOF"})
         return TypeNode(
             "array",
             start.line,
@@ -339,26 +415,32 @@ class SNLParser:
         if self.at("CHAR"):
             self.advance()
             return TypeNode("char", token.line)
-        self.error(f"expected base type INTEGER or CHAR, found {token.display()}")
+        self.error_at(token.line, "missing-type", f"expected base type integer or char, found {token.display()}")
         return TypeNode("unknown", token.line)
 
     def parse_record_type(self) -> TypeNode:
         start = self.expect("RECORD")
         fields: list[FieldDecl] = []
-        while self.current.lex in FIELD_TYPE_START:
+        if self.at("END"):
+            self.error_at(self.current.line, "missing-declaration", "record type must contain at least one field declaration")
+        while not self.at("END", "EOF"):
+            if self.current.lex not in FIELD_TYPE_START:
+                self.error_at(self.current.line, "unexpected-token", f"expected record field declaration, found {self.current.display()}")
+                self.recover(FIELD_TYPE_START | {"END", "EOF"})
+                continue
             field_type = self.parse_array_type() if self.at("ARRAY") else self.parse_base_type()
-            names = self.parse_id_list()
-            self.expect("SEMI")
+            names = self.parse_id_list(context="as record field name", recover_to={"SEMI", "END", "EOF"})
+            self.expect("SEMI", context="after record field declaration", recover_to=FIELD_TYPE_START | {"END", "EOF"})
             fields.append(FieldDecl(field_type, names))
-        self.expect("END")
+        self.expect("END", context="to close record type", recover_to={"SEMI", "VAR", "PROCEDURE", "BEGIN", "EOF"})
         return TypeNode("record", start.line, fields=fields)
 
-    def parse_id_list(self) -> list[tuple[str, int]]:
-        token = self.expect("ID")
+    def parse_id_list(self, *, context: str = "in identifier list", recover_to: set[str] | None = None) -> list[tuple[str, int]]:
+        token = self.expect("ID", context=context, recover_to=(recover_to or {"SEMI", "EOF"}) | {"COMMA"})
         ids = [(token.sem, token.line)]
         while self.at("COMMA"):
             self.advance()
-            token = self.expect("ID")
+            token = self.expect("ID", context="after comma", recover_to=recover_to or {"SEMI", "EOF"})
             ids.append((token.sem, token.line))
         return ids
 
@@ -367,12 +449,25 @@ class SNLParser:
         if not self.at("VAR"):
             return decls
         self.advance()
-        while self.current.lex in TYPE_START:
+        if not self.starts_var_declaration():
+            self.error_at(self.current.line, "missing-declaration", "expected at least one variable declaration after var")
+        while not self.at("EOF", "PROCEDURE", "BEGIN"):
+            if not self.starts_var_declaration():
+                if self.current.lex in STMT_START:
+                    break
+                self.error_at(self.current.line, "unexpected-token", f"expected variable declaration, found {self.current.display()}")
+                self.recover(TYPE_START | {"PROCEDURE", "BEGIN", "EOF"})
+                continue
             type_node = self.parse_type_name()
-            names = self.parse_id_list()
-            self.expect("SEMI")
+            names = self.parse_id_list(context="as variable name", recover_to={"SEMI", "PROCEDURE", "BEGIN", "EOF"})
+            self.expect("SEMI", context="after variable declaration", recover_to=TYPE_START | {"PROCEDURE", "BEGIN", "EOF"})
             decls.append(VarDecl(type_node, names))
         return decls
+
+    def starts_var_declaration(self) -> bool:
+        if self.at("INTEGER", "CHAR", "ARRAY", "RECORD"):
+            return True
+        return self.at("ID") and self.peek().lex == "ID"
 
     def parse_proc_dec(self) -> list[ProcDecl]:
         procedures: list[ProcDecl] = []
@@ -382,11 +477,11 @@ class SNLParser:
 
     def parse_proc_declaration(self) -> ProcDecl:
         self.expect("PROCEDURE")
-        name = self.expect("ID")
-        self.expect("LPAREN")
+        name = self.expect("ID", context="as procedure name", recover_to={"LPAREN", "SEMI", *DECL_START, "EOF"})
+        self.expect("LPAREN", context=f"after procedure name '{name.sem}'", recover_to=TYPE_START | {"VAR", "RPAREN", "SEMI", "EOF"})
         params = self.parse_param_list()
-        self.expect("RPAREN")
-        self.expect("SEMI")
+        self.expect("RPAREN", context="after procedure parameter list", recover_to={"SEMI", *DECL_START, "EOF"})
+        self.expect("SEMI", context="after procedure header", recover_to=DECL_START | {"EOF"})
         type_decls, var_decls, proc_decls = self.parse_declare_part()
         body = self.parse_program_body()
         return ProcDecl(name.sem, name.line, params, type_decls, var_decls, proc_decls, body)
@@ -395,9 +490,17 @@ class SNLParser:
         params: list[Param] = []
         if self.at("RPAREN"):
             return params
+        if self.current.lex not in TYPE_START | {"VAR"}:
+            self.error_at(self.current.line, "unexpected-token", f"expected parameter declaration, found {self.current.display()}")
+            self.recover(TYPE_START | {"VAR", "RPAREN", "SEMI", "EOF"})
+            if self.at("RPAREN", "EOF"):
+                return params
         params.extend(self.parse_param())
         while self.at("SEMI"):
             self.advance()
+            if self.at("RPAREN"):
+                self.error_at(self.current.line, "unexpected-token", "trailing semicolon in parameter list")
+                break
             params.extend(self.parse_param())
         return params
 
@@ -406,18 +509,21 @@ class SNLParser:
         if self.at("VAR"):
             self.advance()
         type_node = self.parse_type_name()
-        return [Param(name, mode, type_node, line) for name, line in self.parse_id_list()]
+        return [
+            Param(name, mode, type_node, line)
+            for name, line in self.parse_id_list(context="as formal parameter name", recover_to={"SEMI", "RPAREN", "EOF"})
+        ]
 
     def parse_program_body(self) -> list[Stmt]:
-        self.expect("BEGIN")
-        body = self.parse_stm_list({"END"})
-        self.expect("END")
+        self.expect("BEGIN", context="before statement list", recover_to=STMT_START | {"END", "DOT", "EOF"})
+        body = self.parse_stm_list({"END", "DOT"})
+        self.expect("END", context="to close program body", recover_to={"DOT", "SEMI", "EOF"})
         return body
 
     def parse_stm_list(self, terminators: set[str]) -> list[Stmt]:
         statements: list[Stmt] = []
         if self.current.lex in terminators:
-            self.error("expected statement before statement-list terminator")
+            self.error_at(self.current.line, "missing-statement", f"expected statement before {self.current.display()}")
             return statements
 
         while not self.at("EOF") and self.current.lex not in terminators:
@@ -429,15 +535,15 @@ class SNLParser:
                 if self.current.lex in terminators:
                     break
                 if self.current.lex in STMT_START:
-                    self.error("missing SEMI between statements")
+                    self.error_at(self.current.line, "missing-token", "expected ; between statements")
                     continue
-                self.error(f"expected SEMI or terminator, found {self.current.display()}")
+                self.error_at(self.current.line, "unexpected-token", f"expected ; or statement-list terminator, found {self.current.display()}")
                 self.recover(STMT_START | terminators | {"SEMI"})
                 if self.at("SEMI"):
                     self.advance()
                 continue
 
-            self.error(f"expected statement, found {self.current.display()}")
+            self.error_at(self.current.line, "unexpected-token", f"expected statement, found {self.current.display()}")
             self.recover(STMT_START | terminators | {"SEMI"})
             if self.at("SEMI"):
                 self.advance()
@@ -462,63 +568,70 @@ class SNLParser:
             return self.parse_assignment_rest(name)
 
         token = self.advance()
-        self.error(f"expected statement, found {token.display()}")
+        self.error_at(token.line, "unexpected-token", f"expected statement, found {token.display()}")
         return ReturnStmt(token.line, ConstExpr(token.line, value=0))
 
     def parse_assignment_rest(self, name: Token) -> AssignStmt:
         target = self.finish_variable(name)
-        self.expect("ASSIGN")
+        self.expect("ASSIGN", context=f"in assignment to '{name.sem}'", recover_to=EXPR_START | EXPR_FOLLOW)
         return AssignStmt(name.line, target, self.parse_exp())
 
     def parse_call_stm_rest(self, name: Token) -> CallStmt:
-        self.expect("LPAREN")
+        self.expect("LPAREN", context=f"after procedure name '{name.sem}'", recover_to=EXPR_START | {"RPAREN", "SEMI", "EOF"})
         args = [] if self.at("RPAREN") else self.parse_act_param_list()
-        self.expect("RPAREN")
+        self.expect("RPAREN", context=f"after arguments for '{name.sem}'", recover_to={"SEMI", "END", "ELSE", "FI", "ENDWH", "EOF"})
         return CallStmt(name.line, name.sem, args)
 
     def parse_conditional_stm(self) -> IfStmt:
         token = self.expect("IF")
         condition = self.parse_rel_exp()
-        self.expect("THEN")
-        then_body = self.parse_stm_list({"ELSE"})
-        self.expect("ELSE")
-        else_body = self.parse_stm_list({"FI"})
-        self.expect("FI")
+        self.expect("THEN", context="after if condition", recover_to=STMT_START | {"ELSE", "FI", "EOF"})
+        then_body = self.parse_stm_list({"ELSE", "FI"})
+        if self.at("ELSE"):
+            self.advance()
+            else_body = self.parse_stm_list({"FI"})
+        else:
+            self.error_at(self.current.line, "missing-token", "expected else before fi")
+            else_body = []
+        self.expect("FI", context="to close if statement", recover_to={"SEMI", "END", "ENDWH", "EOF"})
         return IfStmt(token.line, condition, then_body, else_body)
 
     def parse_loop_stm(self) -> WhileStmt:
         token = self.expect("WHILE")
         condition = self.parse_rel_exp()
-        self.expect("DO")
-        body = self.parse_stm_list({"ENDWH"})
-        self.expect("ENDWH")
+        self.expect("DO", context="after while condition", recover_to=STMT_START | {"ENDWH", "END", "EOF"})
+        body = self.parse_stm_list({"ENDWH", "END"})
+        self.expect("ENDWH", context="to close while statement", recover_to={"SEMI", "END", "EOF"})
         return WhileStmt(token.line, condition, body)
 
     def parse_input_stm(self) -> ReadStmt:
         token = self.expect("READ")
-        self.expect("LPAREN")
-        name = self.expect("ID")
-        self.expect("RPAREN")
+        self.expect("LPAREN", context="after read", recover_to={"ID", "RPAREN", "SEMI", "EOF"})
+        name = self.expect("ID", context="as read target", recover_to={"RPAREN", "SEMI", "EOF"})
+        self.expect("RPAREN", context="after read target", recover_to={"SEMI", "END", "ELSE", "FI", "ENDWH", "EOF"})
         return ReadStmt(token.line, VarRef(name.sem, name.line))
 
     def parse_output_stm(self) -> WriteStmt:
         token = self.expect("WRITE")
-        self.expect("LPAREN")
+        self.expect("LPAREN", context="after write", recover_to=EXPR_START | {"RPAREN", "SEMI", "EOF"})
         expr = self.parse_exp()
-        self.expect("RPAREN")
+        self.expect("RPAREN", context="after write expression", recover_to={"SEMI", "END", "ELSE", "FI", "ENDWH", "EOF"})
         return WriteStmt(token.line, expr)
 
     def parse_return_stm(self) -> ReturnStmt:
         token = self.expect("RETURN")
-        self.expect("LPAREN")
+        self.expect("LPAREN", context="after return", recover_to=EXPR_START | {"RPAREN", "SEMI", "EOF"})
         expr = self.parse_exp()
-        self.expect("RPAREN")
+        self.expect("RPAREN", context="after return expression", recover_to={"SEMI", "END", "ELSE", "FI", "ENDWH", "EOF"})
         return ReturnStmt(token.line, expr)
 
     def parse_act_param_list(self) -> list[Expr]:
         params = [self.parse_exp()]
         while self.at("COMMA"):
             self.advance()
+            if self.at("RPAREN"):
+                self.error_at(self.current.line, "missing-expression", "expected actual parameter after comma")
+                break
             params.append(self.parse_exp())
         return params
 
@@ -528,13 +641,16 @@ class SNLParser:
             op = self.advance()
             right = self.parse_exp()
             return BinaryExpr(op.line, op=CMP_OPS[op.lex], left=left, right=right)
-        self.error(f"expected comparison operator, found {self.current.display()}")
+        self.error_at(self.current.line, "missing-operator", f"expected comparison operator < or =, found {self.current.display()}")
         return left
 
     def parse_exp(self) -> Expr:
         left = self.parse_term()
         if self.current.lex in ADD_OPS:
             op = self.advance()
+            if self.current.lex in EXPR_FOLLOW:
+                self.error_at(self.current.line, "missing-expression", f"expected expression after '{ADD_OPS[op.lex]}'")
+                return BinaryExpr(op.line, op=ADD_OPS[op.lex], left=left, right=ConstExpr(self.current.line, value=0))
             right = self.parse_exp()
             return BinaryExpr(op.line, op=ADD_OPS[op.lex], left=left, right=right)
         return left
@@ -543,6 +659,9 @@ class SNLParser:
         left = self.parse_factor()
         if self.current.lex in MULT_OPS:
             op = self.advance()
+            if self.current.lex in EXPR_FOLLOW:
+                self.error_at(self.current.line, "missing-expression", f"expected expression after '{MULT_OPS[op.lex]}'")
+                return BinaryExpr(op.line, op=MULT_OPS[op.lex], left=left, right=ConstExpr(self.current.line, value=1))
             right = self.parse_term()
             return BinaryExpr(op.line, op=MULT_OPS[op.lex], left=left, right=right)
         return left
@@ -551,7 +670,7 @@ class SNLParser:
         if self.at("LPAREN"):
             self.advance()
             expr = self.parse_exp()
-            self.expect("RPAREN")
+            self.expect("RPAREN", context="after parenthesized expression", recover_to=EXPR_FOLLOW)
             return expr
         if self.at("INTC"):
             token = self.advance()
@@ -564,8 +683,13 @@ class SNLParser:
             token = self.advance()
             return VarExpr(token.line, ref=self.finish_variable(token))
 
+        if self.current.lex in EXPR_FOLLOW:
+            self.error_at(self.current.line, "missing-expression", f"expected expression before {self.current.display()}")
+            return ConstExpr(self.current.line, value=0)
+
         token = self.advance()
-        self.error(f"expected expression factor, found {token.display()}")
+        self.error_at(token.line, "unexpected-token", f"expected expression factor, found {token.display()}")
+        self.recover(EXPR_FOLLOW | set(ADD_OPS) | set(MULT_OPS))
         return ConstExpr(token.line, value=0)
 
     def finish_variable(self, name: Token) -> VarRef:
@@ -573,15 +697,15 @@ class SNLParser:
         if self.at("LMIDPAREN"):
             self.advance()
             ref.selectors.append(IndexSelector(self.parse_exp()))
-            self.expect("RMIDPAREN")
+            self.expect("RMIDPAREN", context=f"after index of '{name.sem}'", recover_to=EXPR_FOLLOW | {"ASSIGN"})
         elif self.at("DOT"):
             self.advance()
-            field = self.expect("ID")
+            field = self.expect("ID", context=f"as field name after '{name.sem}.'", recover_to={"LMIDPAREN", "ASSIGN", *EXPR_FOLLOW})
             selector = FieldSelector(field.sem, field.line)
             if self.at("LMIDPAREN"):
                 self.advance()
                 selector.index = IndexSelector(self.parse_exp())
-                self.expect("RMIDPAREN")
+                self.expect("RMIDPAREN", context=f"after index of field '{field.sem}'", recover_to=EXPR_FOLLOW | {"ASSIGN"})
             ref.selectors.append(selector)
         return ref
 
