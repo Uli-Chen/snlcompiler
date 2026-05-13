@@ -1,0 +1,15 @@
+program constantFolding
+
+var
+  integer x, y;
+
+begin
+  x := 1 + 2 * 3;
+  if 1 < 2 then
+    y := 20 / 5
+  else
+    y := 0
+  fi;
+  write(x);
+  write(y)
+end.

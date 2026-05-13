@@ -1,0 +1,11 @@
+program cseDemo
+
+var
+  integer a, b, x;
+
+begin
+  a := 3;
+  b := 4;
+  x := (a + b) * (a + b);
+  write(x)
+end.

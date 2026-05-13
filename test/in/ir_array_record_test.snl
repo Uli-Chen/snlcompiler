@@ -1,0 +1,22 @@
+program irArrayRecord
+
+type
+  IntArray = array [1..3] of integer;
+  Box = record
+    integer first;
+    array [1..3] of integer values;
+  end;
+
+var
+  integer x;
+  IntArray nums;
+  Box box;
+
+begin
+  nums[1] := 4;
+  nums[2] := 5;
+  box.first := nums[1] + nums[2];
+  box.values[3] := box.first * 2;
+  x := box.values[3];
+  write(x)
+end.

@@ -19,19 +19,19 @@ from typing import Iterable
 DEFAULT_GRAMMAR = Path(__file__).with_name("grammar.txt")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True) #Token一旦生成就不可变
 class Token:
-    line_show: int
-    lex: str
-    sem: str = ""
+    line_show: int #行号
+    lex: str #词法类型例如“ID”
+    sem: str = "" #语义值
 
 
 @dataclass
 class LexicalGrammar:
-    keywords: dict[str, str]
-    symbols: list[tuple[str, str]]
-    comments: list[tuple[str, str]]
-    identifier_re: re.Pattern[str]
+    keywords: dict[str, str] # {"program" → "PROGRAM", "if" → "IF", ...}
+    symbols: list[tuple[str, str]] # [(":=", "ASSIGN"), ("..", "UNDERANGE"), ...]
+    comments: list[tuple[str, str]] # [("{", "}")]
+    identifier_re: re.Pattern[str] # 编译好的正则
     integer_re: re.Pattern[str]
     char_literal_re: re.Pattern[str]
 
