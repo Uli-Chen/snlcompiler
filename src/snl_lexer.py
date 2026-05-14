@@ -134,8 +134,14 @@ class SNLLexer:
 
             integer = self._match(self.grammar.integer_re, source, i)
             if integer:
-                tokens.append(Token(line, "INTC", integer))
-                i += len(integer)
+                # 整数后紧跟字母 → 非法标识符（如 2abc）
+                if i + len(integer) < length and source[i + len(integer)].isalpha():
+                    bad = integer + self._match(self.grammar.identifier_re, source, i + len(integer))
+                    tokens.append(Token(line, "ERROR", f"invalid identifier '{bad}' (cannot start with digit)"))
+                    i += len(bad)
+                else:
+                    tokens.append(Token(line, "INTC", integer))
+                    i += len(integer)
                 continue
 
             if ch == "'":
