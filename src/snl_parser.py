@@ -533,18 +533,21 @@ class SNLParser:
 
     def parse_exp(self) -> Expr:
         left = self.parse_term()
-        if self.current.lex in ADD_OPS:
+        # 加减法按常见语言规则处理为左结合：
+        # 2 - 1 - 1 应解析为 (2 - 1) - 1，而不是 2 - (1 - 1)。
+        while self.current.lex in ADD_OPS:
             op = self.advance()
-            right = self.parse_exp()
-            return BinaryExpr(op.line, op=ADD_OPS[op.lex], left=left, right=right)
+            right = self.parse_term()
+            left = BinaryExpr(op.line, op=ADD_OPS[op.lex], left=left, right=right)
         return left
 
     def parse_term(self) -> Expr:
         left = self.parse_factor()
-        if self.current.lex in MULT_OPS:
+        # 乘除法同样左结合，避免 20 / 5 / 2 被解析成 20 / (5 / 2)。
+        while self.current.lex in MULT_OPS:
             op = self.advance()
-            right = self.parse_term()
-            return BinaryExpr(op.line, op=MULT_OPS[op.lex], left=left, right=right)
+            right = self.parse_factor()
+            left = BinaryExpr(op.line, op=MULT_OPS[op.lex], left=left, right=right)
         return left
 
     def parse_factor(self) -> Expr:

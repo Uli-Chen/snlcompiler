@@ -1,0 +1,9 @@
+program assocMinus
+
+var
+  integer x;
+
+begin
+  x := 2 - 1 - 1;
+  write(x)
+end.

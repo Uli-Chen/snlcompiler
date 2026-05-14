@@ -1,0 +1,11 @@
+program associativity
+
+var
+  integer minusResult, divResult;
+
+begin
+  minusResult := 2 - 1 - 1;
+  divResult := 20 / 5 / 2;
+  write(minusResult);
+  write(divResult)
+end.
