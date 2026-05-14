@@ -1,0 +1,18 @@
+program optimizationExtremeLoop
+
+var
+  integer limit, i, acc;
+
+begin
+  read(limit);
+  i := 0;
+  acc := 0;
+  while i < limit do
+    acc := acc + limit * 1 + limit * 1 + limit * 1 + limit * 1
+             + limit * 1 + limit * 1 + limit * 1 + limit * 1
+             + limit * 1 + limit * 1 + limit * 1 + limit * 1
+             + limit * 1 + limit * 1 + limit * 1 + limit * 1;
+    i := i + 1
+  endwh;
+  write(acc)
+end.

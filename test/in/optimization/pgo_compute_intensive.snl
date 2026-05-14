@@ -1,0 +1,16 @@
+program pgoComputeIntensive
+{循环体极简，分支开销占比大，展开后分支减少带来显著整体提升}
+
+var
+  integer limit, i, acc;
+
+begin
+  read(limit);
+  i := 0;
+  acc := 0;
+  while i < limit do
+    acc := acc + i;
+    i := i + 1
+  endwh;
+  write(acc)
+end.

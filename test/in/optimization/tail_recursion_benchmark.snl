@@ -1,0 +1,22 @@
+program tailRecursionBenchmark
+
+var
+  integer limit, result;
+
+procedure sumTo(integer n; var integer acc);
+begin
+  if n < 1 then
+    acc := acc
+  else
+    acc := acc + n;
+    sumTo(n - 1, acc)
+  fi;
+  return(acc)
+end
+
+begin
+  read(limit);
+  result := 0;
+  sumTo(limit, result);
+  write(result)
+end.
