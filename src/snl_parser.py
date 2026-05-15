@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Recursive-descent parser for SNL.
+"""SNL 递归下降语法分析器。
 
-This module is the single syntactic entry point for the compiler.  It turns a
-token stream into a typed AST; semantic analysis and code generation walk that
-AST instead of reparsing tokens.
+本模块是编译器唯一的语法入口：将 Token 流转换为带类型的 AST。
+后续的语义分析和代码生成均遍历此 AST，不再重新解析 Token。
 """
 
 from __future__ import annotations
@@ -16,12 +15,13 @@ from pathlib import Path
 from typing import Literal
 
 
-TYPE_START = {"INTEGER", "CHAR", "ARRAY", "RECORD", "ID"}
-FIELD_TYPE_START = {"INTEGER", "CHAR", "ARRAY"}
-STMT_START = {"IF", "WHILE", "READ", "WRITE", "RETURN", "ID"}
-ADD_OPS = {"PLUS": "+", "MINUS": "-"}
-MULT_OPS = {"TIMES": "*", "OVER": "/"}
-CMP_OPS = {"LT": "<", "EQ": "="}
+# ─── FIRST 集合定义 ───
+TYPE_START = {"INTEGER", "CHAR", "ARRAY", "RECORD", "ID"}  # 类型声明的起始 Token
+FIELD_TYPE_START = {"INTEGER", "CHAR", "ARRAY"}             # record 字段允许的类型
+STMT_START = {"IF", "WHILE", "READ", "WRITE", "RETURN", "ID"}  # 语句的起始 Token
+ADD_OPS = {"PLUS": "+", "MINUS": "-"}   # 加法级运算符
+MULT_OPS = {"TIMES": "*", "OVER": "/"}  # 乘法级运算符
+CMP_OPS = {"LT": "<", "EQ": "="}       # 关系运算符
 
 
 @dataclass(frozen=True)
@@ -36,14 +36,15 @@ class Token:
 
 @dataclass
 class TypeNode:
+    """类型 AST 节点。kind 取值：integer/char/array/record/alias/unknown"""
     kind: str
     line: int
-    name: str = ""
-    low: int | None = None
-    high: int | None = None
-    element: "TypeNode | None" = None
-    fields: list["FieldDecl"] = field(default_factory=list)
-    type_info: object | None = None
+    name: str = ""                              # alias 类型引用的名称
+    low: int | None = None                      # array 下界
+    high: int | None = None                     # array 上界
+    element: "TypeNode | None" = None           # array 元素类型
+    fields: list["FieldDecl"] = field(default_factory=list)  # record 字段列表
+    type_info: object | None = None             # 语义分析阶段填充的 TypeInfo
 
 
 @dataclass
@@ -92,12 +93,13 @@ Selector = IndexSelector | FieldSelector
 
 @dataclass
 class VarRef:
+    """变量引用，包含名称和选择器链（数组下标、记录字段）。"""
     name: str
     line: int
     selectors: list[Selector] = field(default_factory=list)
-    symbol: object | None = None
-    type_info: object | None = None
-    assignable: bool = False
+    symbol: object | None = None     # 语义分析后绑定的 Symbol
+    type_info: object | None = None  # 经过选择器解析后的最终类型
+    assignable: bool = False         # 是否可作为赋值目标
 
 
 @dataclass
@@ -237,6 +239,11 @@ def load_tokens(path: Path) -> list[Token]:
 
 
 class SNLParser:
+    """LL(1) 递归下降解析器。
+
+    通过 FIRST/FOLLOW 集合预测产生式，遇到错误时进行恢复而非立即终止。
+    """
+
     def __init__(self, tokens: list[Token]) -> None:
         self.tokens = tokens
         self.index = 0
@@ -572,6 +579,11 @@ class SNLParser:
         return ConstExpr(token.line, value=0)
 
     def finish_variable(self, name: Token) -> VarRef:
+        """解析变量引用的选择器部分。
+
+        限制：当前只支持一层选择器（arr[i] 或 rec.field 或 rec.field[i]），
+        不支持多层链式访问如 arr[i].field.sub[j]。
+        """
         ref = VarRef(name.sem, name.line)
         if self.at("LMIDPAREN"):
             self.advance()

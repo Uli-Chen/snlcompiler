@@ -1,0 +1,24 @@
+program staticLinkRecursive
+
+procedure outer();
+var
+  integer total;
+
+procedure count(integer n);
+begin
+  if n < 1 then
+    write(total)
+  else
+    total := total + 1;
+    count(n - 1)
+  fi
+end
+
+begin
+  total := 0;
+  count(3)
+end
+
+begin
+  outer()
+end.

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Lexical analyzer for the SNL teaching language.
+"""SNL 词法分析器。
 
-Input:  an SNL source file
-Output: a Token sequence with LineShow, Lex, and Sem fields
+输入：SNL 源文件文本
+输出：Token 序列（行号 + 词法类型 + 语义值）
 """
 
 from __future__ import annotations
@@ -19,21 +19,23 @@ from typing import Iterable
 DEFAULT_GRAMMAR = Path(__file__).with_name("grammar.txt")
 
 
-@dataclass(frozen=True) #Token一旦生成就不可变
+@dataclass(frozen=True)
 class Token:
-    line_show: int #行号
-    lex: str #词法类型例如“ID”
-    sem: str = "" #语义值
+    """词法单元，一旦生成不可变。"""
+    line_show: int  # 源码行号
+    lex: str        # 词法类型，如 "ID"、"INTC"、"PROGRAM"
+    sem: str = ""   # 语义值，如标识符名称或整数字面量
 
 
 @dataclass
 class LexicalGrammar:
-    keywords: dict[str, str] # {"program" → "PROGRAM", "if" → "IF", ...}
-    symbols: list[tuple[str, str]] # [(":=", "ASSIGN"), ("..", "UNDERANGE"), ...]
-    comments: list[tuple[str, str]] # [("{", "}")]
-    identifier_re: re.Pattern[str] # 编译好的正则
-    integer_re: re.Pattern[str]
-    char_literal_re: re.Pattern[str]
+    """从 grammar.txt 加载的词法规则集合。"""
+    keywords: dict[str, str]          # 关键字映射，如 {"program": "PROGRAM", "if": "IF"}
+    symbols: list[tuple[str, str]]    # 符号列表，按长度降序排列以支持最长匹配
+    comments: list[tuple[str, str]]   # 注释定界符对，如 [("{", "}")]
+    identifier_re: re.Pattern[str]    # 标识符正则
+    integer_re: re.Pattern[str]       # 整数正则
+    char_literal_re: re.Pattern[str]  # 字符字面量正则
 
 
 class LexerError(RuntimeError):
@@ -41,6 +43,11 @@ class LexerError(RuntimeError):
 
 
 def load_grammar(path: Path) -> LexicalGrammar:
+    """解析 grammar.txt 配置文件，构建词法规则。
+
+    配置文件每行格式为：指令 参数1 参数2
+    支持的指令：KEYWORD、SYMBOL、COMMENT、IDENTIFIER、INTEGER、CHAR_LITERAL
+    """
     keywords: dict[str, str] = {}
     symbols: list[tuple[str, str]] = []
     comments: list[tuple[str, str]] = []
@@ -77,6 +84,7 @@ def load_grammar(path: Path) -> LexicalGrammar:
         else:
             raise LexerError(f"{path}:{line_no}: unknown grammar directive {parts[0]!r}")
 
+    # 符号按长度降序排列，确保 ":=" 优先于 ":"、".." 优先于 "."
     symbols.sort(key=lambda item: len(item[0]), reverse=True)
     return LexicalGrammar(
         keywords=keywords,
@@ -89,10 +97,16 @@ def load_grammar(path: Path) -> LexicalGrammar:
 
 
 class SNLLexer:
+    """SNL 词法扫描器。单遍扫描，无回溯，O(n) 复杂度。"""
+
     def __init__(self, grammar: LexicalGrammar) -> None:
         self.grammar = grammar
 
     def tokenize(self, source: str, include_eof: bool = False) -> list[Token]:
+        """将源码文本扫描为 Token 列表。
+
+        扫描优先级：空白 > 注释 > 标识符/关键字 > 整数 > 字符字面量 > 符号 > 错误字符
+        """
         tokens: list[Token] = []
         i = 0
         line = 1
@@ -122,6 +136,7 @@ class SNLLexer:
                 i += len(end)
                 continue
 
+            # 标识符和关键字共用同一正则，通过查表区分
             identifier = self._match(self.grammar.identifier_re, source, i)
             if identifier:
                 lex_type = self.grammar.keywords.get(identifier.lower())

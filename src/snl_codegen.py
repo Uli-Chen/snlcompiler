@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""SNL to MIPS32 code generation through quadruple IR."""
+"""SNL 目标代码生成器：四元式 IR → MIPS32 汇编。
+
+栈帧布局（从高地址到低地址）：
+  调用者压入的实参（从右到左）
+  静态链指针（8($fp)）
+  保存的 $fp（0($fp)）← $fp 指向此处
+  保存的 $ra（4($fp)）
+  局部变量区
+  临时变量区 ← $sp 指向栈底
+"""
 
 from __future__ import annotations
 
@@ -29,6 +38,8 @@ class CodegenError(RuntimeError):
 
 
 class RegisterPool:
+    """临时寄存器池，管理 $t0-$t9 的分配与回收。"""
+
     def __init__(self) -> None:
         self.available = [f"$t{i}" for i in range(9, -1, -1)]
 
@@ -58,6 +69,7 @@ class MIPSProgram:
 
 
 def type_size_words(type_info: TypeInfo) -> int:
+    """计算类型占用的字数（每字 4 字节）。"""
     if type_info.kind in {"integer", "char", "bool", "unknown"}:
         return 1
     if type_info.kind == "array":
@@ -70,6 +82,7 @@ def type_size_words(type_info: TypeInfo) -> int:
 
 
 def field_offset_words(record_type: TypeInfo, field_name: str) -> int:
+    """计算记录类型中指定字段的偏移字数。"""
     offset = 0
     for name, field_type in record_type.fields.items():
         if name == field_name:
@@ -82,6 +95,10 @@ def mangle(text: str) -> str:
     return re.sub(r"[^0-9A-Za-z_]", "_", text)
 
 
+STATIC_LINK_OFFSET = 8    # 静态链在栈帧中的偏移（相对 $fp）
+PARAM_BASE_OFFSET = 12    # 第一个参数在栈帧中的偏移（相对 $fp）
+
+
 class IRMIPSGenerator:
     def __init__(self, ir: IRProgram) -> None:
         self.ir = ir
@@ -92,9 +109,12 @@ class IRMIPSGenerator:
         self.current_temp_offsets: dict[str, int] = {}
         self.main_temp_labels: dict[str, str] = {}
         self.pending_params: list[Quad] = []
+        self.procedure_temp_offsets: dict[int, dict[str, int]] = {}
+        self.procedure_local_bytes: dict[int, int] = {}
 
     def generate(self) -> str:
         self.assign_labels()
+        self.assign_all_procedure_storage()
         self.emit_global_storage()
         self.emit_main_temp_storage()
         for proc in self.ir.procedures:
@@ -111,8 +131,8 @@ class IRMIPSGenerator:
         for symbol in self.ir.globals:
             symbol.storage = "global"
             symbol.label = f"g_{mangle(symbol.name)}"
-        for proc in walk_procedures(self.ir.procedures):
-            proc.symbol.label = f"proc_{mangle(proc.name)}"
+        for index, proc in enumerate(walk_procedures(self.ir.procedures)):
+            proc.symbol.label = f"proc_{index}_{mangle(proc.name)}"
 
     def emit_global_storage(self) -> None:
         for symbol in self.ir.globals:
@@ -132,29 +152,42 @@ class IRMIPSGenerator:
         for child in proc.children:
             self.emit_procedure(child)
 
-        local_bytes = self.assign_procedure_storage(proc)
         self.current_unit = proc
+        self.current_temp_offsets = self.procedure_temp_offsets[id(proc)]
         self.current_end_label = self.label_name(proc, proc.end_label)
         self.program.emit(f"{proc.symbol.label}:")
-        self.emit_prologue(local_bytes)
+        self.emit_prologue(self.procedure_local_bytes[id(proc)])
         self.emit_quads(proc.quads, proc.name)
         self.emit_epilogue()
         self.current_end_label = None
+
+    def assign_all_procedure_storage(self) -> None:
+        for proc in self.ir.procedures:
+            self.assign_procedure_storage_tree(proc)
+
+    def assign_procedure_storage_tree(self, proc: IRProcedure) -> None:
+        # 先为父过程分配偏移，再处理子过程。这样子过程通过静态链访问
+        # 外层局部变量时，外层 symbol 已经带有稳定的 frame offset。
+        self.assign_procedure_storage(proc)
+        for child in proc.children:
+            self.assign_procedure_storage_tree(child)
 
     def assign_procedure_storage(self, proc: IRProcedure) -> int:
         next_offset = 0
         for index, symbol in enumerate(proc.params):
             symbol.storage = "param"
-            symbol.offset = 8 + index * 4
+            symbol.offset = PARAM_BASE_OFFSET + index * 4
         for symbol in proc.locals:
             words = max(1, type_size_words(symbol.type_info))
             next_offset -= words * 4
             symbol.storage = "local"
             symbol.offset = next_offset
-        self.current_temp_offsets = {}
+        temp_offsets: dict[str, int] = {}
         for temp in proc.temp_types:
             next_offset -= 4
-            self.current_temp_offsets[temp] = next_offset
+            temp_offsets[temp] = next_offset
+        self.procedure_temp_offsets[id(proc)] = temp_offsets
+        self.procedure_local_bytes[id(proc)] = -next_offset
         return -next_offset
 
     def emit_prologue(self, local_bytes: int) -> None:
@@ -279,15 +312,18 @@ class IRMIPSGenerator:
         self.regs.free(base)
 
     def emit_call(self, quad: Quad) -> None:
+        symbol = require_symbol(quad.symbol or quad.arg1)
         for param in reversed(self.pending_params):
             value = self.load_operand(param.arg1)
             self.program.emit("addi $sp, $sp, -4")
             self.program.emit(f"sw {value}, 0($sp)")
             self.regs.free(value)
-        symbol = require_symbol(quad.symbol or quad.arg1)
+        static_link = self.load_static_link_for_call(symbol)
+        self.program.emit("addi $sp, $sp, -4")
+        self.program.emit(f"sw {static_link}, 0($sp)")
+        self.regs.free(static_link)
         self.program.emit(f"jal {symbol.label}")
-        if self.pending_params:
-            self.program.emit(f"addi $sp, $sp, {len(self.pending_params) * 4}")
+        self.program.emit(f"addi $sp, $sp, {(len(self.pending_params) + 1) * 4}")
         self.pending_params.clear()
 
     def emit_read(self, quad: Quad) -> None:
@@ -329,14 +365,57 @@ class IRMIPSGenerator:
         raise CodegenError(f"unsupported IR operand: {operand!r}")
 
     def address_of_symbol(self, symbol: Symbol) -> str:
-        reg = self.regs.alloc()
         if symbol.storage == "global":
+            reg = self.regs.alloc()
             self.program.emit(f"la {reg}, {symbol.label}")
-        elif symbol.storage == "param" and symbol.mode == "var":
-            self.program.emit(f"lw {reg}, {symbol.offset}($fp)")
-        else:
-            self.program.emit(f"addi {reg}, $fp, {symbol.offset}")
-        return reg
+            return reg
+
+        frame = self.load_frame_for_level(symbol.scope_level)
+        if symbol.storage == "param" and symbol.mode == "var":
+            self.program.emit(f"lw {frame}, {symbol.offset}({frame})")
+            return frame
+
+        self.program.emit(f"addi {frame}, {frame}, {symbol.offset}")
+        return frame
+
+    def current_level(self) -> int:
+        return self.current_unit.lexical_level if self.current_unit is not None else 0
+
+    def load_frame_for_level(self, target_level: int) -> str:
+        current_level = self.current_level()
+        if target_level <= 0 or target_level > current_level:
+            raise CodegenError(
+                f"cannot access lexical level {target_level} from current level {current_level}"
+            )
+
+        frame = self.regs.alloc()
+        self.program.emit(f"move {frame}, $fp")
+        # 静态链位于每个过程栈帧的 8($fp)。沿链向外走，
+        # 可以拿到声明该 symbol 的词法外层活动记录。
+        for _ in range(current_level - target_level):
+            self.program.emit(f"lw {frame}, {STATIC_LINK_OFFSET}({frame})")
+        return frame
+
+    def load_static_link_for_call(self, callee: Symbol) -> str:
+        parent_level = callee.parent_level
+        static_link = self.regs.alloc()
+        if parent_level == 0:
+            self.program.emit(f"li {static_link}, 0")
+            return static_link
+
+        current_level = self.current_level()
+        if current_level < parent_level:
+            raise CodegenError(
+                f"cannot call procedure '{callee.name}' needing lexical parent level "
+                f"{parent_level} from current level {current_level}"
+            )
+
+        self.program.emit(f"move {static_link}, $fp")
+        # 调用过程时传入"被调过程的父词法层"的活动记录地址。
+        # 直接调用子过程时 steps=0，传当前 $fp；兄弟/递归调用则沿静态链回退。
+        for _ in range(current_level - parent_level):
+            self.program.emit(f"lw {static_link}, {STATIC_LINK_OFFSET}({static_link})")
+        return static_link
 
     def load_temp(self, temp: str, reg: str) -> None:
         if self.current_unit is self.ir.main:
@@ -357,7 +436,10 @@ class IRMIPSGenerator:
         self.program.emit(f"sw {reg}, {self.current_temp_offsets[temp]}($fp)")
 
     def label_name(self, unit: IRUnit | None, label: str) -> str:
-        prefix = mangle(unit.name if unit is not None else "main")
+        if isinstance(unit, IRProcedure):
+            prefix = mangle(str(unit.symbol.label))
+        else:
+            prefix = mangle(unit.name if unit is not None else "main")
         return f"{prefix}_{label}"
 
 

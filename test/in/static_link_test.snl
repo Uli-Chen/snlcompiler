@@ -1,0 +1,20 @@
+program staticLink
+
+procedure outer();
+var
+  integer x;
+
+procedure inner();
+begin
+  x := x + 1
+end
+
+begin
+  x := 41;
+  inner();
+  write(x)
+end
+
+begin
+  outer()
+end.

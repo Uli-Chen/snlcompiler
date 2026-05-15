@@ -1,0 +1,25 @@
+program staticLinkSibling
+
+procedure outer();
+var
+  integer x;
+
+procedure addTwo();
+begin
+  x := x + 2
+end
+
+procedure bounce();
+begin
+  addTwo()
+end
+
+begin
+  x := 5;
+  bounce();
+  write(x)
+end
+
+begin
+  outer()
+end.

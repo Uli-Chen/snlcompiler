@@ -1,0 +1,24 @@
+program staticLinkRecord
+
+procedure outer();
+type
+  pair = record
+    integer value;
+  end;
+var
+  pair r;
+
+procedure inner();
+begin
+  r.value := r.value + 4
+end
+
+begin
+  r.value := 6;
+  inner();
+  write(r.value)
+end
+
+begin
+  outer()
+end.

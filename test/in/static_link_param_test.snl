@@ -1,0 +1,23 @@
+program staticLinkParam
+
+var
+  integer a;
+
+procedure inc(var integer x);
+begin
+  x := x + 1
+end
+
+procedure showNext(integer x);
+begin
+  x := x + 1;
+  write(x)
+end
+
+begin
+  a := 3;
+  inc(a);
+  write(a);
+  showNext(a);
+  write(a)
+end.

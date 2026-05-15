@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Generate quadruple IR from a semantically checked SNL AST."""
+"""SNL 中间代码生成器。
+
+将经过语义检查的 AST 转换为四元式 IR。
+核心策略：表达式求值到临时变量，控制流用标签和跳转实现。
+"""
 
 from __future__ import annotations
 
@@ -18,23 +22,28 @@ class IRGenError(RuntimeError):
 
 
 class UnitBuilder:
+    """IR 构建辅助器，管理临时变量和标签的分配。"""
+
     def __init__(self, unit: IRUnit) -> None:
         self.unit = unit
         self.temp_counter = 0
         self.label_counter = 0
 
     def temp(self, type_info: TypeInfo = UNKNOWN) -> str:
+        """分配一个新的临时变量名（t0, t1, ...）。"""
         name = f"t{self.temp_counter}"
         self.temp_counter += 1
         self.unit.temp_types[name] = type_info
         return name
 
     def label(self, prefix: str = "L") -> str:
+        """分配一个新的标签名。"""
         name = f"{prefix}{self.label_counter}"
         self.label_counter += 1
         return name
 
     def emit(self, op: str, arg1: Operand = None, arg2: Operand = None, result: Operand = None, **kwargs: object) -> Quad:
+        """发射一条四元式到当前编译单元。"""
         quad = Quad(op, arg1, arg2, result, **kwargs)
         self.unit.quads.append(quad)
         return quad
@@ -59,6 +68,7 @@ class SNLIRGenerator:
             params=symbol.param_symbols,
             locals=collect_decl_symbols(proc.var_decls),
             end_label=f"{proc.name}_return",
+            lexical_level=symbol.scope_level,
         )
         unit.children = [self.emit_procedure(child) for child in proc.proc_decls]
         builder = UnitBuilder(unit)
@@ -108,6 +118,7 @@ class SNLIRGenerator:
         builder.emit("label", result=end_label)
 
     def emit_false_branch(self, condition: Expr, false_label: str, builder: UnitBuilder) -> None:
+        """生成条件为假时跳转的代码。SNL 条件必须是关系表达式。"""
         if not isinstance(condition, BinaryExpr) or condition.op not in {"<", "="}:
             raise IRGenError(f"line {condition.line}: expected relational condition after semantic analysis")
         left = self.emit_expr(require_expr(condition.left), builder)
@@ -147,6 +158,11 @@ class SNLIRGenerator:
         raise IRGenError(f"line {expr.line}: unsupported expression in IR generation")
 
     def emit_lvalue(self, ref: VarRef, builder: UnitBuilder) -> Operand:
+        """生成左值地址计算代码。返回一个持有目标内存地址的临时变量。
+
+        对于简单变量，生成 addr 指令取地址；
+        对于带选择器的变量（数组下标、记录字段），逐层生成地址偏移计算。
+        """
         symbol = require_symbol(ref.symbol, ref.name)
         current_type = symbol.type_info
         address = builder.temp(UNKNOWN)

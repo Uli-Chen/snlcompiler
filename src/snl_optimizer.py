@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""IR-level optimizations for SNL."""
+"""SNL IR 级优化。
+
+当前实现两种基本块内优化：
+1. 常量折叠：编译期计算常量算术表达式和条件跳转
+2. 公共子表达式消除（CSE）：复用已计算的相同表达式结果
+"""
 
 from __future__ import annotations
 
@@ -9,9 +14,9 @@ except ModuleNotFoundError:
     from snl_ir import IRProcedure, IRProgram, IRUnit, Operand, Quad, is_temp
 
 
-PURE_EXPR_OPS = {"+", "-", "*", "/", "addr", "index_addr", "field_addr", "load"}
-COMMUTATIVE_OPS = {"+", "*"}
-BLOCK_END_OPS = {"goto", "return", "call", "read"}
+PURE_EXPR_OPS = {"+", "-", "*", "/", "addr", "index_addr", "field_addr", "load"}  # 无副作用的表达式操作
+COMMUTATIVE_OPS = {"+", "*"}  # 交换律成立的操作（CSE 时规范化操作数顺序）
+BLOCK_END_OPS = {"goto", "return", "call", "read"}  # 基本块终结操作
 
 
 def optimize_program(program: IRProgram) -> IRProgram:
@@ -35,6 +40,12 @@ def optimize_unit(unit: IRUnit) -> None:
 
 
 def fold_constants(quads: list[Quad]) -> list[Quad]:
+    """常量折叠优化。
+
+    维护一个 constants 字典追踪已知为常量的临时变量。
+    当算术操作的两个操作数都是常量时，直接计算结果替换为赋值。
+    当条件跳转的两个操作数都是常量时，直接决定是否跳转。
+    """
     constants: dict[str, int] = {}
     optimized: list[Quad] = []
 
@@ -89,6 +100,12 @@ def eval_arithmetic(op: str, left: int, right: int) -> int | None:
 
 
 def eliminate_common_subexpressions(quads: list[Quad]) -> list[Quad]:
+    """公共子表达式消除。
+
+    在基本块内追踪已计算的表达式。当遇到相同表达式时，
+    用赋值替代重复计算。遇到 store/read/call 时清除表达式缓存
+    （因为内存状态可能改变）。
+    """
     aliases: dict[str, Operand] = {}
     expressions: dict[tuple, str] = {}
     optimized: list[Quad] = []

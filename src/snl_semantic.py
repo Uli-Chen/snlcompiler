@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Semantic analysis for the SNL AST."""
+"""SNL 语义分析器。
+
+职责：类型检查、符号表管理、作用域嵌套验证。
+遍历 AST 并为每个标识符绑定 Symbol，为每个表达式推导类型。
+"""
 
 from __future__ import annotations
 
@@ -14,11 +18,12 @@ from snl_parser import *
 
 @dataclass
 class TypeInfo:
+    """运行时类型描述。kind 取值：integer/char/bool/array/record/procedure/unknown"""
     kind: str
-    low: int | None = None
-    high: int | None = None
-    element: "TypeInfo | None" = None
-    fields: dict[str, "TypeInfo"] = field(default_factory=dict)
+    low: int | None = None                          # array 下界
+    high: int | None = None                         # array 上界
+    element: "TypeInfo | None" = None               # array 元素类型
+    fields: dict[str, "TypeInfo"] = field(default_factory=dict)  # record 字段名→类型
 
     def display(self) -> str:
         if self.kind == "array":
@@ -32,10 +37,11 @@ class TypeInfo:
         return self.kind
 
 
+# ─── 内置类型单例 ───
 INTEGER = TypeInfo("integer")
 CHAR = TypeInfo("char")
 BOOL = TypeInfo("bool")
-UNKNOWN = TypeInfo("unknown")
+UNKNOWN = TypeInfo("unknown")       # 类型推导失败时的占位符，不触发级联错误
 PROCEDURE_TYPE = TypeInfo("procedure")
 
 
@@ -53,16 +59,19 @@ class ParamInfo:
 
 @dataclass
 class Symbol:
+    """符号表条目。每个声明的标识符对应一个 Symbol。"""
     name: str
-    kind: str
+    kind: str           # "var" | "param" | "type" | "procedure" | "program"
     type_info: TypeInfo
     line: int
-    params: list[ParamInfo] = field(default_factory=list)
-    mode: str = ""
-    label: str = ""
-    storage: str = ""
-    offset: int = 0
-    param_symbols: list["Symbol"] = field(default_factory=list)
+    params: list[ParamInfo] = field(default_factory=list)      # 过程的形参列表
+    mode: str = ""                                              # 参数传递方式："value" | "var"
+    label: str = ""                                             # 代码生成阶段的汇编标签
+    storage: str = ""                                           # "global" | "local" | "param"
+    offset: int = 0                                             # 栈帧内偏移（字节）
+    param_symbols: list["Symbol"] = field(default_factory=list) # 形参对应的 Symbol 列表
+    scope_level: int = 0                                        # 声明所在的词法层级
+    parent_level: int = 0                                       # 过程的父词法层级（用于静态链）
 
     def type_display(self) -> str:
         if self.kind == "procedure":
@@ -91,9 +100,15 @@ class SemanticError(RuntimeError):
 
 
 class SymbolTable:
+    """嵌套作用域符号表。
+
+    使用栈结构管理作用域层次：enter() 压入新作用域，leave() 弹出。
+    lookup() 从内向外逐层查找，实现词法作用域的名称解析。
+    """
+
     def __init__(self) -> None:
-        self.scopes: list[Scope] = []
-        self.stack: list[Scope] = []
+        self.scopes: list[Scope] = []   # 所有已创建的作用域（用于输出）
+        self.stack: list[Scope] = []    # 当前活跃的作用域栈
 
     def enter(self, name: str) -> Scope:
         parent = self.stack[-1].number if self.stack else None
@@ -423,6 +438,15 @@ class SNLSemanticAnalyzer:
         return current_type
 
     def declare(self, symbol: Symbol) -> None:
+        if symbol.kind == "procedure":
+            # 过程 symbol 声明在父作用域中，但运行时栈帧属于下一层。
+            # parent_level 后端用来计算调用时应传入哪一层的静态链。
+            symbol.parent_level = self.table.current.level
+            symbol.scope_level = self.table.current.level + 1
+        else:
+            # 普通变量/参数/type 的层级就是当前词法作用域层级。
+            symbol.scope_level = self.table.current.level
+
         duplicate = self.table.declare(symbol)
         if duplicate is not None:
             self.error(
@@ -436,10 +460,12 @@ class SNLSemanticAnalyzer:
 
 
 def is_aggregate(type_info: TypeInfo) -> bool:
+    """判断类型是否为聚合类型（数组或记录），聚合类型不支持整体赋值/传值。"""
     return type_info.kind in {"array", "record"}
 
 
 def same_type(left: TypeInfo, right: TypeInfo) -> bool:
+    """结构等价的类型比较。UNKNOWN 与任何类型兼容（避免级联错误）。"""
     if left.kind == "unknown" or right.kind == "unknown":
         return True
     if left.kind != right.kind:

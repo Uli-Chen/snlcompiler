@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Run the MIPS subset emitted by the SNL compiler."""
+"""MIPS32 子集模拟器，用于测试 SNL 编译器生成的汇编代码。
+
+支持的指令集：算术、访存、分支跳转、系统调用（I/O 和退出）。
+内存模型：数据段从 0x10010000 开始，栈从 0x7FFFEFFC 向下增长。
+"""
 
 from __future__ import annotations
 
@@ -14,17 +18,19 @@ class RunnerError(RuntimeError):
 
 
 class MIPSRunner:
+    """MIPS32 子集解释器。逐条执行指令，模拟寄存器和内存。"""
+
     def __init__(self, assembly: str, inputs: list[str]) -> None:
         self.assembly = assembly
-        self.inputs = inputs
-        self.output: list[str] = []
+        self.inputs = inputs          # 预设的输入值队列（供 read syscall 消费）
+        self.output: list[str] = []   # 输出缓冲区
         self.regs: dict[str, int] = {name: 0 for name in self.register_names()}
-        self.regs["$sp"] = 0x7FFFEFFC
+        self.regs["$sp"] = 0x7FFFEFFC  # 栈指针初始值
         self.regs["$fp"] = self.regs["$sp"]
         self.regs["$zero"] = 0
-        self.memory: dict[int, int] = {}
-        self.data_labels: dict[str, int] = {}
-        self.text_labels: dict[str, int] = {}
+        self.memory: dict[int, int] = {}       # 稀疏内存（地址→字值）
+        self.data_labels: dict[str, int] = {}  # 数据段标签→地址
+        self.text_labels: dict[str, int] = {}  # 代码段标签→指令索引
         self.instructions: list[str] = []
         self.parse_assembly()
 
@@ -78,6 +84,7 @@ class MIPSRunner:
         return self.regs.get(name, 0)
 
     def set_reg(self, name: str, value: int) -> None:
+        """设置寄存器值，$zero 寄存器始终为 0。所有值截断为 32 位。"""
         if name != "$zero":
             self.regs[name] = value & 0xFFFFFFFF
 
