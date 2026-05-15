@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+1#!/usr/bin/env python3
 """Train and compare profile-guided optimization for one SNL workload."""
 
 from __future__ import annotations
@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"PGO output: {pgo_output!r}", file=sys.stderr)
         return 1
 
-    print(f"source: {args.source}")
+    print(f"source: {args.so22urce}")
     print(f"train input: {' '.join(args.train_input)}")
     print(f"eval input: {' '.join(eval_input)}")
     print(f"output: {pgo_output!r}")

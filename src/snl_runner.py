@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 
@@ -14,18 +16,29 @@ class RunnerError(RuntimeError):
 
 
 class MIPSRunner:
-    def __init__(self, assembly: str, inputs: list[str]) -> None:
+    def __init__(self, assembly: str, inputs: list[str], max_steps: int = 100000) -> None:
         self.assembly = assembly
         self.inputs = inputs
+        self.max_steps = max_steps
         self.output: list[str] = []
         self.regs: dict[str, int] = {name: 0 for name in self.register_names()}
-        self.regs["$sp"] = 0x7FFFEFFC
+        self.initial_sp = 0x7FFFEFFC
+        self.min_sp = self.initial_sp
+        self.regs["$sp"] = self.initial_sp
         self.regs["$fp"] = self.regs["$sp"]
         self.regs["$zero"] = 0
         self.memory: dict[int, int] = {}
         self.data_labels: dict[str, int] = {}
         self.text_labels: dict[str, int] = {}
+        self.pc_labels: dict[int, list[str]] = {}
         self.instructions: list[str] = []
+        self.op_counts: Counter[str] = Counter()
+        self.label_counts: Counter[str] = Counter()
+        self.branch_taken: Counter[str] = Counter()
+        self.branch_not_taken: Counter[str] = Counter()
+        self.taken_conditional_branches = 0
+        self.not_taken_conditional_branches = 0
+        self.steps = 0
         self.parse_assembly()
 
     @staticmethod
@@ -70,7 +83,10 @@ class MIPSRunner:
                     data_addr += size
             elif section == "text":
                 if line.endswith(":"):
-                    self.text_labels[line[:-1]] = len(self.instructions)
+                    label = line[:-1]
+                    pc = len(self.instructions)
+                    self.text_labels[label] = pc
+                    self.pc_labels.setdefault(pc, []).append(label)
                 else:
                     self.instructions.append(line)
 
@@ -80,6 +96,8 @@ class MIPSRunner:
     def set_reg(self, name: str, value: int) -> None:
         if name != "$zero":
             self.regs[name] = value & 0xFFFFFFFF
+            if name == "$sp":
+                self.min_sp = min(self.min_sp, self.regs[name])
 
     def signed(self, value: int) -> int:
         value &= 0xFFFFFFFF
@@ -87,14 +105,16 @@ class MIPSRunner:
 
     def run(self) -> str:
         pc = self.text_labels.get("main", 0)
-        steps = 0
         while 0 <= pc < len(self.instructions):
-            steps += 1
-            if steps > 100000:
-                raise RunnerError("MIPS runner exceeded 100000 steps")
+            self.steps += 1
+            if self.steps > self.max_steps:
+                raise RunnerError(f"MIPS runner exceeded {self.max_steps} steps")
+            for label in self.pc_labels.get(pc, []):
+                self.label_counts[label] += 1
             next_pc = pc + 1
             inst = self.instructions[pc]
             op, args = self.split_inst(inst)
+            self.op_counts[op] += 1
 
             if op == "li":
                 self.set_reg(args[0], int(args[1]))
@@ -110,6 +130,8 @@ class MIPSRunner:
                 self.set_reg(args[0], self.reg(args[1]) + self.reg(args[2]))
             elif op == "addi":
                 self.set_reg(args[0], self.reg(args[1]) + int(args[2]))
+            elif op == "sll":
+                self.set_reg(args[0], self.reg(args[1]) << int(args[2]))
             elif op == "sub":
                 self.set_reg(args[0], self.reg(args[1]) - self.reg(args[2]))
             elif op == "mul":
@@ -129,7 +151,12 @@ class MIPSRunner:
                     or (op == "blt" and left < right)
                 )
                 if jump:
+                    self.taken_conditional_branches += 1
+                    self.branch_taken[args[2]] += 1
                     next_pc = self.text_labels[args[2]]
+                else:
+                    self.not_taken_conditional_branches += 1
+                    self.branch_not_taken[args[2]] += 1
             elif op == "j":
                 next_pc = self.text_labels[args[0]]
             elif op == "jal":
@@ -146,6 +173,42 @@ class MIPSRunner:
             self.regs["$zero"] = 0
             pc = next_pc
         return "".join(self.output)
+
+    def stats(self) -> dict[str, int]:
+        memory_loads = self.op_counts["lw"]
+        memory_stores = self.op_counts["sw"]
+        arithmetic_ops = sum(self.op_counts[op] for op in ("add", "addi", "sub", "mul", "div"))
+        branch_ops = sum(self.op_counts[op] for op in ("beq", "bne", "bge", "blt", "j", "jal", "jr"))
+        conditional_branch_ops = sum(self.op_counts[op] for op in ("beq", "bne", "bge", "blt"))
+        return {
+            "static_instructions": len(self.instructions),
+            "dynamic_steps": self.steps,
+            "memory_loads": memory_loads,
+            "memory_stores": memory_stores,
+            "memory_ops": memory_loads + memory_stores,
+            "arithmetic_ops": arithmetic_ops,
+            "branch_ops": branch_ops,
+            "conditional_branch_ops": conditional_branch_ops,
+            "taken_conditional_branches": self.taken_conditional_branches,
+            "syscalls": self.op_counts["syscall"],
+            "max_stack_words": (self.initial_sp - self.min_sp) // 4,
+        }
+
+    def profile(self) -> dict[str, object]:
+        labels = {label: count for label, count in sorted(self.label_counts.items())}
+        branches = {
+            label: {
+                "taken": self.branch_taken[label],
+                "not_taken": self.branch_not_taken[label],
+            }
+            for label in sorted(set(self.branch_taken) | set(self.branch_not_taken))
+        }
+        return {
+            "format": "snl-mips-profile-v1",
+            "labels": labels,
+            "branches": branches,
+            "stats": self.stats(),
+        }
 
     @staticmethod
     def split_inst(inst: str) -> tuple[str, list[str]]:
@@ -164,19 +227,37 @@ class MIPSRunner:
         return self.reg(match.group(2)) + int(match.group(1))
 
     def handle_syscall(self) -> bool:
+        """处理 MIPS syscall 指令，返回 True 表示程序应退出。
+
+        支持的 syscall 编号（与 SPIM/MARS 兼容）：
+          1  — 打印整数（$a0）
+          5  — 读取整数 → $v0
+          10 — 退出程序
+          11 — 打印字符（$a0 低 8 位）
+          12 — 读取字符 → $v0
+        """
         code = self.reg("$v0")
         if code == 1:
             self.output.append(str(self.signed(self.reg("$a0"))))
         elif code == 5:
-            self.set_reg("$v0", int(self.inputs.pop(0)) if self.inputs else 0)
+            # 读取整数输入；输入为空时返回 0，输入非法整数时抛出友好错误
+            if self.inputs:
+                raw = self.inputs.pop(0)
+                try:
+                    self.set_reg("$v0", int(raw))
+                except ValueError:
+                    raise RunnerError(f"read syscall: expected integer input, got {raw!r}")
+            else:
+                self.set_reg("$v0", 0)
         elif code == 10:
             return True
         elif code == 11:
             self.output.append(chr(self.reg("$a0") & 0xFF))
         elif code == 12:
+            # 读取字符输入：若输入是纯数字则当作字符编码，否则取第一个字符的 ASCII 值
             if self.inputs:
                 item = self.inputs.pop(0)
-                value = ord(item[0]) if not item.lstrip("-").isdigit() else int(item)
+                value = int(item) if item.lstrip("-").isdigit() else ord(item[0])
             else:
                 value = 0
             self.set_reg("$v0", value)
@@ -189,10 +270,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run MIPS assembly emitted by the SNL compiler.")
     parser.add_argument("assembly", type=Path, help="MIPS assembly file")
     parser.add_argument("--input", nargs="*", default=[], help="values consumed by READ syscalls")
+    parser.add_argument("--max-steps", type=int, default=100000, help="stop after this many executed instructions")
+    parser.add_argument("--stats", action="store_true", help="print execution statistics to stderr")
+    parser.add_argument("--profile-out", type=Path, help="write execution profile as JSON")
     args = parser.parse_args(argv)
 
     try:
-        print(MIPSRunner(args.assembly.read_text(encoding="utf-8"), list(args.input)).run(), end="")
+        runner = MIPSRunner(args.assembly.read_text(encoding="utf-8"), list(args.input), max_steps=args.max_steps)
+        print(runner.run(), end="")
+        if args.stats:
+            for name, value in runner.stats().items():
+                print(f"{name}: {value}", file=sys.stderr)
+        if args.profile_out:
+            args.profile_out.parent.mkdir(parents=True, exist_ok=True)
+            args.profile_out.write_text(json.dumps(runner.profile(), indent=2, sort_keys=True), encoding="utf-8")
     except (OSError, RunnerError, ValueError) as exc:
         print(f"snl_runner.py: {exc}", file=sys.stderr)
         return 2

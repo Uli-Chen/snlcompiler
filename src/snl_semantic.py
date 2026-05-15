@@ -9,7 +9,33 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from snl_parser import *
+from snl_parser import (
+    BinaryExpr,
+    CallStmt,
+    CharExpr,
+    ConstExpr,
+    Expr,
+    FieldDecl,
+    FieldSelector,
+    IfStmt,
+    IndexSelector,
+    Param,
+    ProcDecl,
+    Program,
+    ReadStmt,
+    ReturnStmt,
+    AssignStmt,
+    SNLParser,
+    Stmt,
+    TypeDecl,
+    TypeNode,
+    VarDecl,
+    VarExpr,
+    VarRef,
+    WhileStmt,
+    WriteStmt,
+    load_tokens,
+)
 
 
 @dataclass
@@ -62,6 +88,7 @@ class Symbol:
     label: str = ""
     storage: str = ""
     offset: int = 0
+    scope_level: int = 0  # nesting depth where this symbol is declared
     param_symbols: list["Symbol"] = field(default_factory=list)
 
     def type_display(self) -> str:
@@ -122,6 +149,25 @@ class SymbolTable:
             if symbol is not None:
                 return symbol
         return None
+
+    def is_outer_local(self, name: str) -> bool:
+        """Check if a var/param symbol is from an outer procedure scope (not current, not global)."""
+        current = self.stack[-1] if self.stack else None
+        for scope in reversed(self.stack):
+            symbol = scope.symbols.get(name)
+            if symbol is None:
+                continue
+            if symbol.kind not in {"var", "param"}:
+                return False
+            # Found in current scope → not outer
+            if scope is current:
+                return False
+            # Found in global scope (level 0) → accessible via global storage
+            if scope.level == 0:
+                return False
+            # Found in an intermediate procedure scope → outer local, no static link
+            return True
+        return False
 
 
 class SNLSemanticAnalyzer:
@@ -426,6 +472,7 @@ class SNLSemanticAnalyzer:
         return current_type
 
     def declare(self, symbol: Symbol) -> None:
+        symbol.scope_level = self.table.current.level
         duplicate = self.table.declare(symbol)
         if duplicate is not None:
             self.error(
@@ -454,6 +501,7 @@ def fold_const_int(op: str, left: Expr | None, right: Expr | None) -> int | None
     if op == "*":
         return left.const_int * right.const_int
     if op == "/" and right.const_int != 0:
+        # 使用 int() 截断而非 //，与 MIPS div 指令行为一致（向零截断，非向负无穷）
         return int(left.const_int / right.const_int)
     return None
 

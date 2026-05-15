@@ -183,17 +183,26 @@ class SNLLexer:
         return None
 
     def _scan_char_literal(self, source: str, index: int, line: int) -> tuple[Token, int]:
+        """扫描一个字符字面量，返回 (Token, 消耗的字符数)。
+
+        合法形式：'x'（单个非换行字符）。
+        非法时进行错误恢复：消耗到下一个引号或换行符为止，
+        最多向前看 32 个字符，避免文件末尾无闭合引号时将剩余内容全部吞掉。
+        """
         match = self.grammar.char_literal_re.match(source, index)
         if match:
             literal = match.group(0)
             return Token(line, "CHARC", literal[1:-1]), len(literal)
 
-        next_quote = source.find("'", index + 1)
-        next_newline = source.find("\n", index + 1)
+        # 错误恢复：在有限窗口内找最近的结束边界（引号或换行）
+        search_end = min(index + 32, len(source))
+        next_quote = source.find("'", index + 1, search_end)
+        next_newline = source.find("\n", index + 1, search_end)
         stops = [pos for pos in (next_quote, next_newline) if pos != -1]
-        stop = min(stops) if stops else len(source) - 1
+        stop = min(stops) if stops else search_end - 1
         consumed = max(1, stop - index + 1)
         return Token(line, "ERROR", source[index : index + consumed]), consumed
+
 
 def format_text(tokens: Iterable[Token]) -> str:
     rows = ["LineShow  Lex          Sem", "--------  -----------  ---"]

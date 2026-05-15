@@ -13,7 +13,7 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Optional, Union
 
 
 TYPE_START = {"INTEGER", "CHAR", "ARRAY", "RECORD", "ID"}
@@ -114,7 +114,7 @@ class VarDecl:
 @dataclass
 class Param:
     name: str
-    mode: Literal["value", "var"]
+    mode: str  # "value" or "var"
     type_node: TypeNode
     line: int
     symbol: object | None = None
@@ -132,7 +132,7 @@ class FieldSelector:
     index: IndexSelector | None = None
 
 
-Selector = IndexSelector | FieldSelector
+Selector = Union[IndexSelector, FieldSelector]
 
 
 @dataclass
@@ -505,7 +505,7 @@ class SNLParser:
         return params
 
     def parse_param(self) -> list[Param]:
-        mode: Literal["value", "var"] = "var" if self.at("VAR") else "value"
+        mode: str = "var" if self.at("VAR") else "value"
         if self.at("VAR"):
             self.advance()
         type_node = self.parse_type_name()
@@ -646,24 +646,26 @@ class SNLParser:
 
     def parse_exp(self) -> Expr:
         left = self.parse_term()
-        if self.current.lex in ADD_OPS:
+        while self.current.lex in ADD_OPS:
             op = self.advance()
             if self.current.lex in EXPR_FOLLOW:
                 self.error_at(self.current.line, "missing-expression", f"expected expression after '{ADD_OPS[op.lex]}'")
-                return BinaryExpr(op.line, op=ADD_OPS[op.lex], left=left, right=ConstExpr(self.current.line, value=0))
-            right = self.parse_exp()
-            return BinaryExpr(op.line, op=ADD_OPS[op.lex], left=left, right=right)
+                left = BinaryExpr(op.line, op=ADD_OPS[op.lex], left=left, right=ConstExpr(self.current.line, value=0))
+                break
+            right = self.parse_term()
+            left = BinaryExpr(op.line, op=ADD_OPS[op.lex], left=left, right=right)
         return left
 
     def parse_term(self) -> Expr:
         left = self.parse_factor()
-        if self.current.lex in MULT_OPS:
+        while self.current.lex in MULT_OPS:
             op = self.advance()
             if self.current.lex in EXPR_FOLLOW:
                 self.error_at(self.current.line, "missing-expression", f"expected expression after '{MULT_OPS[op.lex]}'")
-                return BinaryExpr(op.line, op=MULT_OPS[op.lex], left=left, right=ConstExpr(self.current.line, value=1))
-            right = self.parse_term()
-            return BinaryExpr(op.line, op=MULT_OPS[op.lex], left=left, right=right)
+                left = BinaryExpr(op.line, op=MULT_OPS[op.lex], left=left, right=ConstExpr(self.current.line, value=1))
+                break
+            right = self.parse_factor()
+            left = BinaryExpr(op.line, op=MULT_OPS[op.lex], left=left, right=right)
         return left
 
     def parse_factor(self) -> Expr:

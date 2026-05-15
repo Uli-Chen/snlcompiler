@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """Root command-line entry for the SNL compiler."""
 

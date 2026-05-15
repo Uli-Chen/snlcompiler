@@ -1,16 +1,39 @@
 #!/usr/bin/env python3
-"""Generate quadruple IR from a semantically checked SNL AST."""
+"""从语义检查后的 SNL AST 生成四元式 IR。
+
+主要职责：
+  - 遍历 AST，为每条语句和表达式生成对应的四元式序列
+  - 通过 UnitBuilder 管理临时变量（t0、t1…）和标签（L0、L1…）的分配
+  - 左值（lvalue）统一拆成 address-producing 四元式（addr/index_addr/field_addr），
+    后端只需理解地址临时量，无需感知变量的存储位置
+  - 过程调用通过 param + call 四元式序列表达，参数顺序与声明顺序一致
+"""
 
 from __future__ import annotations
 
-try:
-    from playground.snlcompiler.src.snl_ir import IRProcedure, IRProgram, IRUnit, Operand, Quad
-    from playground.snlcompiler.src.snl_parser import *
-    from playground.snlcompiler.src.snl_semantic import BOOL, CHAR, INTEGER, UNKNOWN, Symbol, TypeInfo
-except ModuleNotFoundError:
-    from snl_ir import IRProcedure, IRProgram, IRUnit, Operand, Quad
-    from snl_parser import *
-    from snl_semantic import BOOL, CHAR, INTEGER, UNKNOWN, Symbol, TypeInfo
+from snl_ir import IRProcedure, IRProgram, IRUnit, Operand, Quad
+from snl_parser import (
+    AssignStmt,
+    BinaryExpr,
+    CallStmt,
+    CharExpr,
+    ConstExpr,
+    Expr,
+    FieldSelector,
+    IfStmt,
+    IndexSelector,
+    ProcDecl,
+    Program,
+    ReadStmt,
+    ReturnStmt,
+    Stmt,
+    VarDecl,
+    VarExpr,
+    VarRef,
+    WhileStmt,
+    WriteStmt,
+)
+from snl_semantic import BOOL, CHAR, INTEGER, UNKNOWN, Symbol, TypeInfo
 
 
 class IRGenError(RuntimeError):
@@ -59,6 +82,7 @@ class SNLIRGenerator:
             params=symbol.param_symbols,
             locals=collect_decl_symbols(proc.var_decls),
             end_label=f"{proc.name}_return",
+            scope_level=symbol.scope_level + 1,  # procedure body is one level deeper than where it's declared
         )
         unit.children = [self.emit_procedure(child) for child in proc.proc_decls]
         builder = UnitBuilder(unit)
