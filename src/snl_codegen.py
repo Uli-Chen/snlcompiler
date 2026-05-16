@@ -157,6 +157,7 @@ class IRMIPSGenerator:
         self.current_end_label = self.label_name(proc, proc.end_label)
         self.program.emit(f"{proc.symbol.label}:")
         self.emit_prologue(self.procedure_local_bytes[id(proc)])
+        self.program.emit(f"{proc.symbol.label}_body:")  # 尾递归跳转目标（跳过 prologue）
         self.emit_quads(proc.quads, proc.name)
         self.emit_epilogue()
         self.current_end_label = None
@@ -244,6 +245,8 @@ class IRMIPSGenerator:
                 self.pending_params.append(quad)
             elif quad.op == "call":
                 self.emit_call(quad)
+            elif quad.op == "tail_call":
+                self.emit_tail_call(quad)
             elif quad.op == "read":
                 self.emit_read(quad)
             elif quad.op == "write":
@@ -325,6 +328,22 @@ class IRMIPSGenerator:
         self.program.emit(f"jal {symbol.label}")
         self.program.emit(f"addi $sp, $sp, {(len(self.pending_params) + 1) * 4}")
         self.pending_params.clear()
+
+    def emit_tail_call(self, quad: Quad) -> None:
+        """尾递归优化：复用当前栈帧，将参数重写到当前帧参数位置后直接跳转。
+
+        避免分配新栈帧，使递归调用等价于循环，防止深递归栈溢出。
+        """
+        symbol = require_symbol(quad.symbol or quad.arg1)
+        # 将参数按顺序写入当前栈帧的参数槽位（覆盖旧参数）
+        for index, param in enumerate(self.pending_params):
+            value = self.load_operand(param.arg1)
+            offset = PARAM_BASE_OFFSET + index * 4
+            self.program.emit(f"sw {value}, {offset}($fp)")
+            self.regs.free(value)
+        self.pending_params.clear()
+        # 直接跳转到过程入口（跳过 prologue），复用当前栈帧
+        self.program.emit(f"j {symbol.label}_body")
 
     def emit_read(self, quad: Quad) -> None:
         addr = self.load_operand(quad.result)
@@ -512,7 +531,7 @@ def compile_source(
     output.write_text(assembly, encoding="utf-8")
     return assembly
 
-
+    
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Compile SNL source to 32-bit MIPS assembly.")
     parser.add_argument("source", type=Path, help="SNL source program")
