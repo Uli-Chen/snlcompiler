@@ -249,205 +249,47 @@ symbols.sort(key=lambda item: len(item[0]), reverse=True)
 
 ---
 
-## 4. SNLLexer 的核心扫描循环
+## 4. SNLLexer 的 9 状态 DFA 扫描循环
 
-这是词法分析器的执行引擎（`snl_lexer.py:91-160`）。它是一个**基于状态的手写有限自动机**，在源代码字符串上维护一个指针 `i`，逐个位置尝试匹配。
-
-### 主循环结构
+这是词法分析器的执行引擎。当前实现显式使用教材图 4.7 的 9 个状态：
 
 ```python
-class SNLLexer:
-    def __init__(self, grammar: LexicalGrammar):
-        self.grammar = grammar
-
-    def tokenize(self, source: str, include_eof: bool = False) -> list[Token]:
-        tokens: list[Token] = []
-        i = 0                        # 当前扫描位置（字符索引）
-        line = 1                     # 当前行号
-        length = len(source)
-
-        while i < length:            # 主循环
-            ch = source[i]
-
-            # 第1步：跳过空白符
-            if ch.isspace():
-                if ch == "\n":
-                    line += 1        # 换行时维护行号
-                i += 1
-                continue             # 空白不产生 Token
-
-            # 第2步：检查是否为注释开始
-            comment_match = self._match_comment_start(source, i)
-            if comment_match:
-                ...                  # 跳过整个注释
-                continue
-
-            # 第3步：尝试匹配标识符/关键字
-            identifier = self._match(self.grammar.identifier_re, source, i)
-            if identifier:
-                lex_type = self.grammar.keywords.get(identifier.lower())
-                if lex_type is None:
-                    tokens.append(Token(line, "ID", identifier))
-                else:
-                    tokens.append(Token(line, lex_type))
-                i += len(identifier)
-                continue
-
-            # 第4步：尝试匹配整数常量
-            integer = self._match(self.grammar.integer_re, source, i)
-            if integer:
-                tokens.append(Token(line, "INTC", integer))
-                i += len(integer)
-                continue
-
-            # 第5步：尝试匹配字符字面量
-            if ch == "'":
-                char_token, consumed = self._scan_char_literal(source, i, line)
-                tokens.append(char_token)
-                i += consumed
-                continue
-
-            # 第6步：尝试匹配符号
-            symbol = self._match_symbol(source, i)
-            if symbol:
-                lexeme, lex_type = symbol
-                tokens.append(Token(line, lex_type))
-                i += len(lexeme)
-                continue
-
-            # 第7步：以上都不匹配 → 词法错误
-            tokens.append(Token(line, "ERROR", ch))
-            i += 1
-
-        if include_eof:
-            tokens.append(Token(line, "EOF"))
-
-        return tokens
+class LexerState(Enum):
+    START = auto()
+    INID = auto()
+    INNUM = auto()
+    DONE = auto()
+    INASSIGN = auto()
+    INCOMMENT = auto()
+    INRANGE = auto()
+    INCHAR = auto()
+    ERROR = auto()
 ```
 
-### 为什么是这个匹配顺序？
+主循环维护当前位置 `i` 和当前行号 `line`。每一轮都从 `START` 开始，根据当前字符进入某个状态；该状态负责消费一个完整单词或错误片段，然后回到下一轮 `START`。
 
-这是一个精心设计的 if-elif 链，匹配优先级至关重要：
+| 状态 | 入口条件 | 消费规则 | 输出 |
+|------|----------|----------|------|
+| `START` | 每轮起点 | 跳过空白并维护行号；对非空白字符分派状态 | 不直接输出 token |
+| `INID` | 当前字符是字母 | 连续消费字母或数字 | 关键字 token 或 `ID(sem)` |
+| `INNUM` | 当前字符是数字 | 连续消费数字 | `INTC(sem)` |
+| `DONE` | 当前字符是单字符分界符 | 消费 1 个字符 | 对应符号 token，如 `PLUS`、`SEMI` |
+| `INASSIGN` | 当前字符是 `:` | 若下一个字符是 `=`，消费 `:=`；否则只消费 `:` | `ASSIGN` 或 `ERROR(":")` |
+| `INCOMMENT` | 当前字符匹配注释开始符 `{` | 消费到 `}`；注释内换行也更新行号 | 无 token；未闭合时输出 `ERROR` 并终止 |
+| `INRANGE` | 当前字符是 `.` | 若下一个字符是 `.`，消费 `..`；否则只消费 `.` | `UNDERANGE` 或 `DOT` |
+| `INCHAR` | 当前字符是 `'` | 识别字符常量或消费非法字符片段 | `CHARC(sem)` 或 `ERROR(sem)` |
+| `ERROR` | 以上状态都不适用 | 消费 1 个字符 | `ERROR(sem)` |
 
-| 优先级 | 匹配项 | 原因 |
-|--------|--------|------|
-| **1** | 空白符 | 不产生 Token，只维护行号。必须最先处理，否则空格会被当作非法字符报错 |
-| **2** | 注释 | 注释内部可包含任何字符（包括看似标识符、数字的东西），必须整体跳过 |
-| **3** | 标识符/关键字 | 在整数之前。标识符必须以字母开头，不会与整数冲突 |
-| **4** | 整数常量 | 纯数字序列 |
-| **5** | 字符字面量 | 以 `'` 开头，必须在符号之前，否则 `'` 本身可能被匹配为未知符号 |
-| **6** | 符号 | 固定字符串匹配，兜底 |
-| **7** | 错误 | 所有规则都不匹配，产生 ERROR Token，前进一个字符确保不死锁 |
+### 与教材图 4.7 的对齐点
 
-### 逐步骤详解
+- `INID`、`INNUM`、`INASSIGN`、`INCOMMENT`、`INRANGE`、`INCHAR` 都对应图中的同名状态。
+- 图中的 `DONE` 是“已经识别完成，输出单分界符”的接受状态；代码中用 `DONE` 专门处理单字符分界符。
+- 图中孤立 `:` 走“出错”路径；代码保持同样行为，输出 `ERROR(":")`，不会新增 `COLON` token。
+- `EOF` 不作为源码字符参与主循环，而是由 `include_eof=True` 在扫描结束后追加 `Token(line, "EOF")`。这保持了原有下游契约。
 
-#### 步骤 1：空白符处理
+### 兼容性决策
 
-```python
-if ch.isspace():
-    if ch == "\n":
-        line += 1
-    i += 1
-    continue
-```
-
-空白符（空格、制表符、换行符）**不产生 Token**，只是扫描器的"润滑剂"。唯一要做的是一行行号计数，其他什么也不做，继续扫描。
-
-#### 步骤 2：注释处理
-
-```python
-comment_match = self._match_comment_start(source, i)
-if comment_match:
-    begin, end = comment_match
-    start_line = line
-    i += len(begin)              # 跳过注释开始定界符
-    while i < length and not source.startswith(end, i):
-        if source[i] == "\n":
-            line += 1            # 注释内的换行也要计数
-        i += 1
-    if i >= length:              # 到了文件尾还没找到结束定界符
-        tokens.append(Token(start_line, "ERROR", f"unclosed comment starts with {begin!r}"))
-        break                    # 未闭合注释 → 终止扫描
-    i += len(end)               # 跳过注释结束定界符
-    continue
-```
-
-注释处理有三个要点：
-
-- **注释内的所有内容都被忽略**，注释不产生任何 Token。这是词法分析的语义——注释是给程序员看的，编译器不需要理解。
-- **注释内的换行需要计数**，否则注释跨行后，注释后面的代码会报错在错误的行号上。
-- **未闭合注释是一个致命错误**，直接 `break` 终止扫描。为什么不像其他错误那样继续？因为如果注释未闭合，后面的所有代码都可能被错误地当作注释内容吞噬掉，继续扫描只会产生大量无意义的错误消息。所以不如立即停止。
-
-#### 步骤 3：标识符/关键字识别
-
-```python
-identifier = self._match(self.grammar.identifier_re, source, i)
-if identifier:
-    lex_type = self.grammar.keywords.get(identifier.lower())  # 查关键字表
-    if lex_type is None:
-        tokens.append(Token(line, "ID", identifier))          # 普通标识符
-    else:
-        tokens.append(Token(line, lex_type))                  # 关键字
-    i += len(identifier)
-    continue
-```
-
-这是词法分析中最巧妙的一个设计。**标识符和关键字共用同一个匹配路径**：
-
-1. 先用 `identifier_re` 正则匹配出词素（如 `"if"`、`"myVar"`、`"program"`）
-2. 将词素**转为小写**后查 `keywords` 字典
-3. 查到 → 是关键字，lex 设为对应的类型名，sem 留空
-4. 查不到 → 是普通标识符，lex 设为 `"ID"`，sem 存原始名称
-
-注意 `identifier.lower()` 和 `self.grammar.keywords` 中存的是小写形式（`"program" → "PROGRAM"`），这样 **关键字是大小写不敏感的**，`Program`、`PROGRAM`、`program` 都会被识别为关键字。但标识符的 sem 保留原始大小写，所以 `MyVar` 和 `myvar` 是不同的标识符。
-
-#### 步骤 4：整数常量识别
-
-```python
-integer = self._match(self.grammar.integer_re, source, i)
-if integer:
-    tokens.append(Token(line, "INTC", integer))
-    i += len(integer)
-    continue
-```
-
-整数正则 `[0-9]+` 匹配一个或多个数字。所有整数常量统一标记为 `"INTC"`（INTeger Constant），语义值存数字字符串。**注意语义值是字符串 `"42"` 而不是整数 `42`**，真正的类型转换在语义分析或代码生成阶段完成。
-
-为什么标识符匹配在整数之前？因为标识符必须以字母开头，而整数以数字开头，两者没有重叠。如果在标识符之前匹配整数，`x42` 这种变量名不会被干扰（标识符仍然匹配整个 `x42`），但反过来，如果整数在标识符之前，输入 `42x`（不合法的标识符）会被识别为 `INTC(42)` + `ID(x)`——虽然仍然不对，但至少不会把 `42` 吞掉。当前顺序在合法代码上没有区别。
-
-#### 步骤 5：字符字面量识别
-
-```python
-if ch == "'":
-    char_token, consumed = self._scan_char_literal(source, i, line)
-    tokens.append(char_token)
-    i += consumed
-    continue
-```
-
-单引号 `'` 是字符字面量的触发条件。这里没有用正则去"试"（不像标识符和整数），而是先用 `ch == "'"` 做 O(1) 的快速判断，只有命中后才进入更复杂的 `_scan_char_literal` 逻辑。这是一种**两级过滤**的优化思路。
-
-#### 步骤 6：符号匹配
-
-```python
-symbol = self._match_symbol(source, i)
-if symbol:
-    lexeme, lex_type = symbol
-    tokens.append(Token(line, lex_type))
-    i += len(lexeme)
-    continue
-```
-
-按长度降序遍历 `symbols` 列表，用 `source.startswith(lexeme, i)` 检查当前位置是否以该符号开头。由于已排序，`..` 会在 `.` 之前尝试，保证最长匹配。
-
-#### 步骤 7：错误处理
-
-```python
-tokens.append(Token(line, "ERROR", ch))
-i += 1
-```
-
-如果以上所有规则都不匹配，说明遇到了词法分析器无法识别的字符。产生一个 `ERROR` Token（lex=`"ERROR"`，sem=非法字符本身），然后**前进一个字符继续扫描**。这种"吞一个字符继续"的策略保证了扫描器永远不会陷入死循环，且不会因为一个错误而丢失后续所有 Token。
+教材图 4.7 的 `INCHAR` 中间字符标注为“字母或数字”。本项目原有词法规则为 `CHAR_LITERAL '[^'\n]'`，已经允许任意单个非引号、非换行字符，例如 `'+'`。为了不改变合法输入的 token 序列，DFA 实现保留这个更宽松的项目规则。
 
 ### 参数 include_eof
 
@@ -459,25 +301,17 @@ def tokenize(self, source: str, include_eof: bool = False) -> list[Token]:
 
 ---
 
-## 5. 四个辅助匹配函数详解
+## 5. DFA 辅助函数详解
 
-### 5.1 `_match(pattern, source, index)` — 通用正则匹配
+### 5.1 `_scan_identifier(source, index)` — `INID`
 
-```python
-@staticmethod
-def _match(pattern: re.Pattern[str], source: str, index: int) -> str:
-    match = pattern.match(source, index)
-    return match.group(0) if match else ""
-```
+从字母开头处开始，持续消费字母或数字。返回词素和消费长度。主循环拿到词素后查 `keywords` 表，命中则输出关键字 token，否则输出 `ID` 并把词素放进 `sem`。
 
-行为：
-- 使用 `re.match(source, index)` 从指定位置尝试匹配（不是 `re.search`——search 会在整个字符串中搜索，而我们需要精确控制扫描位置）
-- 匹配成功返回匹配到的字符串，失败返回空字符串 `""`
-- 返回 `""` 而非 `None`，因为空串在布尔上下文中为 False，可以直接作条件判断
+### 5.2 `_scan_integer(source, index)` — `INNUM`
 
-标注 `@staticmethod` 是因为这个函数不访问 `self` 的任何属性——它只依赖于传入的参数，是一个纯函数。
+从数字开头处开始，持续消费数字。返回词素和消费长度。为了保持现有兼容行为，`42abc` 会先输出 `INTC("42")`，下一轮再由 `INID` 输出 `ID("abc")`。
 
-### 5.2 `_match_comment_start(source, index)` — 注释入口检测
+### 5.3 `_match_comment_start(source, index)` 与 `_scan_comment(...)` — `INCOMMENT`
 
 ```python
 def _match_comment_start(self, source: str, index: int):
@@ -487,45 +321,43 @@ def _match_comment_start(self, source: str, index: int):
     return None
 ```
 
-只做一件事：检查当前位置是否匹配某个注释的开始定界符。匹配成功返回 `(开始串, 结束串)` 对，匹配失败返回 `None`。
+`_match_comment_start()` 只做一件事：检查当前位置是否匹配某个注释的开始定界符。匹配成功返回 `(开始串, 结束串)` 对，匹配失败返回 `None`。
 
-这个函数**只负责识别注释的入口**，注释内容的消耗和换行计数由主循环负责。职责分离，各司其职。
+`_scan_comment()` 负责消费注释内容并维护注释内换行。未闭合注释输出 `ERROR("unclosed comment starts with '{'")` 并终止扫描。
 
-### 5.3 `_match_symbol(source, index)` — 符号匹配
+### 5.4 `_scan_assign(source, index, line)` — `INASSIGN`
 
-```python
-def _match_symbol(self, source: str, index: int):
-    for lexeme, lex_type in self.grammar.symbols:       # 已按长度降序
-        if source.startswith(lexeme, index):
-            return lexeme, lex_type
-    return None
-```
+当前位置是 `:` 时进入。若后继字符为 `=`，消费两个字符并输出 `ASSIGN`；否则消费孤立 `:` 并输出 `ERROR(":")`。SNL 当前 token 集没有 `COLON`，这也和教材图 4.7 中孤立冒号的“出错”路径一致。
 
-因为 `symbols` 列表已经在 `load_grammar()` 中按长度降序排好，所以只需要顺序遍历，找到第一个匹配的符号即可。这保证了最长匹配原则——较长的符号（如 `:=`、`..`）优先被尝试。
+### 5.5 `_scan_range(source, index, line)` — `INRANGE`
 
-### 5.4 `_scan_char_literal(source, i, line)` — 字符字面量扫描
+当前位置是 `.` 时进入。若后继字符也是 `.`，消费两个字符并输出 `UNDERANGE`；否则消费一个字符并输出 `DOT`。这直接表达教材图中的数组下标界限状态。
+
+### 5.6 `_scan_char_literal(source, i, line)` — `INCHAR`
 
 这是最复杂的单 Token 匹配逻辑。当扫描主循环遇到 `'` 时触发。
 
 #### 第一层：正常匹配
 
 ```python
-match = self.grammar.char_literal_re.match(source, index)
-if match:
-    literal = match.group(0)            # 如 "'A'"（3个字符）
-    return Token(line, "CHARC", literal[1:-1]), len(literal)
+if (
+    index + 2 < len(source)
+    and source[index + 2] == "'"
+    and source[index + 1] not in {"'", "\n"}
+):
+    return Token(line, "CHARC", source[index + 1]), 3
 ```
 
-正则 `'[^'\n]'` 的含义：
+项目规则等价于 `CHAR_LITERAL '[^'\n]'`：
 - `'` — 开头的单引号
 - `[^'\n]` — 一个字符类：非引号、非换行的任意字符（精确匹配一个字符，无星号/加号量词）
 - `'` — 结尾的单引号
 
-所以匹配成功的字符串一定是 **3 个字符**：`'` + 一个字符 + `'`。语义值取中间的字符，去掉首尾引号：`literal[1:-1]`。
+所以匹配成功的字符串一定是 **3 个字符**：`'` + 一个字符 + `'`。语义值取中间的字符。这个规则比教材图 4.7 的“字母或数字”更宽松，是为了保持既有合法输入兼容。
 
 #### 第二层：异常诊断
 
-当正则匹配失败时，说明遇到了不合法的字符字面量。此时不是逐字符报错，而是**尝试一次性吞掉整个出问题的片段**：
+当正常的三字符形式匹配失败时，说明遇到了不合法的字符字面量。此时不是逐字符报错，而是**尝试一次性吞掉整个出问题的片段**：
 
 ```python
 next_quote = source.find("'", index + 1)      # 从 index+1 开始找下一个引号
@@ -540,7 +372,7 @@ return Token(line, "ERROR", source[index : index + consumed]), consumed
 
 #### 各种情况演示
 
-| 源码 | 正则匹配结果 | 探测器位置 | consumed | 输出 |
+| 源码 | 正常匹配结果 | 探测器位置 | consumed | 输出 |
 |------|-------------|-----------|----------|------|
 | `'A'` | 命中 `'A'` | — | 3 | `CHARC("A")` |
 | `'AB'` | 失败（B 不是结束引号） | next_quote=3 | 4 | `ERROR("'AB'")` |
@@ -548,6 +380,10 @@ return Token(line, "ERROR", source[index : index + consumed]), consumed
 | `'\n` | 失败（换行符被 `\n` 排除） | next_newline=1 | 2 | `ERROR("'\\n")` |
 | `'abc`(EOF) | 失败 | 两者都-1，stop=len-1 | 4 | `ERROR("'abc")` |
 | `'''`（三个引号） | 失败（位置 1 还是引号） | next_quote=1，consumed=2 | 2+1 | 两轮：`ERROR("''")` + `ERROR("'")` |
+
+### 5.7 `_is_single_delimiter()` 与 `_single_symbol_type()` — `DONE`
+
+`DONE` 只处理单字符分界符，例如 `+`、`-`、`*`、`/`、`(`、`)`、`[`、`]`、`;`、`,`、`=`、`<`。`.` 和 `:` 分别由 `INRANGE`、`INASSIGN` 特判，避免把 `..` 或 `:=` 拆开。
 
 ---
 
@@ -563,7 +399,7 @@ return Token(line, "ERROR", source[index : index + consumed]), consumed
 输入: "if"           输入: "x"
   │                     │
   ▼                     ▼
-identifier_re.match()  identifier_re.match()
+INID 扫描词素        INID 扫描词素
   │                     │
   ▼ (匹配 "if")         ▼ (匹配 "x")
   │                     │
@@ -577,8 +413,8 @@ Token(line, "IF")     Token(line, "ID", "x")
 ```
 
 核心要点：
-- **"一个正则，两次使用"**：标识符正则既用于匹配标识符，也用于匹配关键字
-- **查表在匹配之后**：先用正则找出词素，再查关键字表下结论
+- **一条状态路径，两种输出**：关键字和普通标识符都先进入 `INID`
+- **查表在扫描之后**：先扫描完整词素，再查关键字表下结论
 - **关键字大小写不敏感**：因为查表时转小写，`If`、`IF`、`if` 都命中
 - **标识符大小写敏感**：因为 sem 存原始值，`myVar` 和 `myvar` 视为不同变量（由后续语义分析决定）
 
@@ -630,20 +466,20 @@ end.
 
 | 步骤 | 当前位置 | 匹配规则 | 产生 Token | 行号 |
 |------|---------|----------|------------|------|
-| 1 | 0: `p` | identifier_re → `"program"`, keywords → `"PROGRAM"` | `PROGRAM` | 1 |
+| 1 | 0: `p` | `INID` → `"program"`, keywords → `"PROGRAM"` | `PROGRAM` | 1 |
 | 2 | 8: ` ` | 空白 → 跳过 | — | 1 |
-| 3 | 9: `h` | identifier_re → `"hello"`, 非关键字 | `ID("hello")` | 1 |
+| 3 | 9: `h` | `INID` → `"hello"`, 非关键字 | `ID("hello")` | 1 |
 | 4 | 14: `\n` | 空白 → 跳过 | — | 2 |
-| 5 | 15: `b` | identifier_re → `"begin"`, keywords → `"BEGIN"` | `BEGIN` | 2 |
+| 5 | 15: `b` | `INID` → `"begin"`, keywords → `"BEGIN"` | `BEGIN` | 2 |
 | 6 | 20: `\n` | 空白 → 跳过 | — | 3 |
 | 7 | 21: ` ` | 空白 → 跳过 | — | 3 |
-| 8 | 22: `w` | identifier_re → `"write"`, keywords → `"WRITE"` | `WRITE` | 3 |
-| 9 | 27: `(` | symbol → `(`, symbols → LPAREN | `LPAREN` | 3 |
-| 10 | 28: `1` | integer_re → `"1"` | `INTC("1")` | 3 |
-| 11 | 29: `)` | symbol → `)`, symbols → RPAREN | `RPAREN` | 3 |
+| 8 | 22: `w` | `INID` → `"write"`, keywords → `"WRITE"` | `WRITE` | 3 |
+| 9 | 27: `(` | `DONE` → LPAREN | `LPAREN` | 3 |
+| 10 | 28: `1` | `INNUM` → `"1"` | `INTC("1")` | 3 |
+| 11 | 29: `)` | `DONE` → RPAREN | `RPAREN` | 3 |
 | 12 | 30: `\n` | 空白 → 跳过 | — | 4 |
-| 13 | 31: `e` | identifier_re → `"end"`, keywords → `"END"` | `END` | 4 |
-| 14 | 34: `.` | symbol → `.`, symbols → DOT | `DOT` | 4 |
+| 13 | 31: `e` | `INID` → `"end"`, keywords → `"END"` | `END` | 4 |
+| 14 | 34: `.` | `INRANGE` → DOT | `DOT` | 4 |
 | 15 | 35: `\n` | 空白 → 跳过 | — | 5 |
 | 16 | (EOF) | include_eof=True | `EOF` | 5 |
 
@@ -670,9 +506,10 @@ LineShow  Lex          Sem
 | 特点 | 实现方式 |
 |------|---------|
 | **配置驱动** | 词法规则从 grammar.txt 读取，不硬编码在代码中 |
-| **贪心最长匹配** | 符号按长度降序排列，`:=` 优先于 `.`，`..` 优先于 `.` |
-| **关键字复用标识符正则** | 匹配后 O(1) 查表区分，节省正则数量 |
-| **两级过滤优化** | 先用 `ch == "'"` 判断再进入字符字面量扫描，避免不必要正则调用 |
+| **教材 9 状态 DFA** | 显式定义 `START`、`INID`、`INNUM`、`DONE`、`INASSIGN`、`INCOMMENT`、`INRANGE`、`INCHAR`、`ERROR` |
+| **双字符符号特判** | `INASSIGN` 处理 `:=`，`INRANGE` 处理 `..`，避免被拆成单字符 |
+| **关键字复用 `INID`** | 标识符和关键字先走同一状态，扫描后 O(1) 查表区分 |
+| **字符常量兼容** | `INCHAR` 保留项目已有的任意单字符规则，兼容 `'+'` 等输入 |
 | **不中断的错误恢复** | 未知字符标 ERROR 跳过；注释未闭合直接 break |
 | **单 pass 无回溯** | 指针线性扫描，每个字符只处理一次，无回溯，O(n) 时间复杂度 |
 | **行号精确维护** | 空白和注释内都维护 line 计数 |

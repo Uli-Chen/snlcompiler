@@ -12,6 +12,7 @@ import json
 import re
 import sys
 from dataclasses import asdict, dataclass
+from enum import Enum, auto
 from pathlib import Path
 from typing import Iterable
 
@@ -40,6 +41,25 @@ class LexicalGrammar:
 
 class LexerError(RuntimeError):
     pass
+
+
+class LexerState(Enum):
+    """Textbook 9-state DFA used by the SNL scanner.
+
+    The names mirror 图 4.7 in the course textbook.  Some accepting behavior
+    remains project-compatible, most notably INCHAR accepting any single
+    non-quote, non-newline character instead of only letters/digits.
+    """
+
+    START = auto()
+    INID = auto()
+    INNUM = auto()
+    DONE = auto()
+    INASSIGN = auto()
+    INCOMMENT = auto()
+    INRANGE = auto()
+    INCHAR = auto()
+    ERROR = auto()
 
 
 def load_grammar(path: Path) -> LexicalGrammar:
@@ -97,7 +117,7 @@ def load_grammar(path: Path) -> LexicalGrammar:
 
 
 class SNLLexer:
-    """SNL 词法扫描器。单遍扫描，无回溯，O(n) 复杂度。"""
+    """SNL 词法扫描器。单遍 9 状态 DFA，O(n) 复杂度。"""
 
     def __init__(self, grammar: LexicalGrammar) -> None:
         self.grammar = grammar
@@ -105,7 +125,8 @@ class SNLLexer:
     def tokenize(self, source: str, include_eof: bool = False) -> list[Token]:
         """将源码文本扫描为 Token 列表。
 
-        扫描优先级：空白 > 注释 > 标识符/关键字 > 整数 > 字符字面量 > 符号 > 错误字符
+        扫描流程对应教材图 4.7：START 先按当前字符分派到 8 个
+        后续状态之一，每个状态负责消费当前单词并回到 START。
         """
         tokens: list[Token] = []
         i = 0
@@ -113,6 +134,8 @@ class SNLLexer:
         length = len(source)
 
         while i < length:
+            state = LexerState.START
+            token_line = line
             ch = source[i]
 
             if ch.isspace():
@@ -121,58 +144,103 @@ class SNLLexer:
                 i += 1
                 continue
 
-            comment_match = self._match_comment_start(source, i)
-            if comment_match:
-                begin, end = comment_match
-                start_line = line
-                i += len(begin)
-                while i < length and not source.startswith(end, i):
-                    if source[i] == "\n":
-                        line += 1
-                    i += 1
-                if i >= length:
-                    tokens.append(Token(start_line, "ERROR", f"unclosed comment starts with {begin!r}"))
-                    break
-                i += len(end)
-                continue
+            if ch.isalpha():
+                state = LexerState.INID
+            elif ch.isdigit():
+                state = LexerState.INNUM
+            elif ch == ":":
+                state = LexerState.INASSIGN
+            elif self._match_comment_start(source, i):
+                state = LexerState.INCOMMENT
+            elif ch == ".":
+                state = LexerState.INRANGE
+            elif ch == "'":
+                state = LexerState.INCHAR
+            elif self._is_single_delimiter(ch):
+                state = LexerState.DONE
+            else:
+                state = LexerState.ERROR
 
-            # 标识符和关键字共用同一正则，通过查表区分
-            identifier = self._match(self.grammar.identifier_re, source, i)
-            if identifier:
+            if state == LexerState.INID:
+                identifier, consumed = self._scan_identifier(source, i)
                 lex_type = self.grammar.keywords.get(identifier.lower())
-                if lex_type is None:
-                    tokens.append(Token(line, "ID", identifier))
-                else:
-                    tokens.append(Token(line, lex_type))
-                i += len(identifier)
-                continue
-
-            integer = self._match(self.grammar.integer_re, source, i)
-            if integer:
-                tokens.append(Token(line, "INTC", integer))
-                i += len(integer)
-                continue
-
-            if ch == "'":
-                char_token, consumed = self._scan_char_literal(source, i, line)
-                tokens.append(char_token)
+                tokens.append(Token(token_line, lex_type or "ID", "" if lex_type else identifier))
                 i += consumed
-                continue
-
-            symbol = self._match_symbol(source, i)
-            if symbol:
-                lexeme, lex_type = symbol
-                tokens.append(Token(line, lex_type))
-                i += len(lexeme)
-                continue
-
-            tokens.append(Token(line, "ERROR", ch))
-            i += 1
+            elif state == LexerState.INNUM:
+                integer, consumed = self._scan_integer(source, i)
+                tokens.append(Token(token_line, "INTC", integer))
+                i += consumed
+            elif state == LexerState.DONE:
+                tokens.append(Token(token_line, self._single_symbol_type(ch)))
+                i += 1
+            elif state == LexerState.INASSIGN:
+                token, consumed = self._scan_assign(source, i, token_line)
+                tokens.append(token)
+                i += consumed
+            elif state == LexerState.INCOMMENT:
+                token, consumed, new_line = self._scan_comment(source, i, token_line, line)
+                if token is not None:
+                    tokens.append(token)
+                    break
+                i += consumed
+                line = new_line
+            elif state == LexerState.INRANGE:
+                token, consumed = self._scan_range(source, i, token_line)
+                tokens.append(token)
+                i += consumed
+            elif state == LexerState.INCHAR:
+                token, consumed = self._scan_char_literal(source, i, token_line)
+                tokens.append(token)
+                i += consumed
+            elif state == LexerState.ERROR:
+                tokens.append(Token(token_line, "ERROR", ch))
+                i += 1
 
         if include_eof:
             tokens.append(Token(line, "EOF"))
 
         return tokens
+
+    @staticmethod
+    def _scan_identifier(source: str, index: int) -> tuple[str, int]:
+        end = index + 1
+        while end < len(source) and source[end].isalnum():
+            end += 1
+        return source[index:end], end - index
+
+    @staticmethod
+    def _scan_integer(source: str, index: int) -> tuple[str, int]:
+        end = index + 1
+        while end < len(source) and source[end].isdigit():
+            end += 1
+        return source[index:end], end - index
+
+    def _scan_assign(self, source: str, index: int, line: int) -> tuple[Token, int]:
+        if index + 1 < len(source) and source[index + 1] == "=":
+            return Token(line, "ASSIGN"), 2
+        return Token(line, "ERROR", ":"), 1
+
+    def _scan_comment(self, source: str, index: int, token_line: int, line: int) -> tuple[Token | None, int, int]:
+        comment_match = self._match_comment_start(source, index)
+        if comment_match is None:
+            return Token(token_line, "ERROR", source[index]), 1, line
+
+        begin, end = comment_match
+        i = index + len(begin)
+        current_line = line
+        while i < len(source) and not source.startswith(end, i):
+            if source[i] == "\n":
+                current_line += 1
+            i += 1
+        if i >= len(source):
+            return Token(token_line, "ERROR", f"unclosed comment starts with {begin!r}"), i - index, current_line
+        i += len(end)
+        return None, i - index, current_line
+
+    def _scan_range(self, source: str, index: int, line: int) -> tuple[Token, int]:
+        if index + 1 < len(source) and source[index + 1] == ".":
+            return Token(line, "UNDERANGE"), 2
+        return Token(line, self._single_symbol_type(".")), 1
 
     def _match_comment_start(self, source: str, index: int) -> tuple[str, str] | None:
         for begin, end in self.grammar.comments:
@@ -180,22 +248,25 @@ class SNLLexer:
                 return begin, end
         return None
 
-    @staticmethod
-    def _match(pattern: re.Pattern[str], source: str, index: int) -> str:
-        match = pattern.match(source, index)
-        return match.group(0) if match else ""
+    def _is_single_delimiter(self, ch: str) -> bool:
+        return any(lexeme == ch for lexeme, _ in self.grammar.symbols)
 
-    def _match_symbol(self, source: str, index: int) -> tuple[str, str] | None:
+    def _single_symbol_type(self, ch: str) -> str:
         for lexeme, lex_type in self.grammar.symbols:
-            if source.startswith(lexeme, index):
-                return lexeme, lex_type
-        return None
+            if lexeme == ch:
+                return lex_type
+        return "ERROR"
 
     def _scan_char_literal(self, source: str, index: int, line: int) -> tuple[Token, int]:
-        match = self.grammar.char_literal_re.match(source, index)
-        if match:
-            literal = match.group(0)
-            return Token(line, "CHARC", literal[1:-1]), len(literal)
+        # Textbook 图 4.7 labels the middle character as letter/digit.  The
+        # project already accepted any single non-quote, non-newline character,
+        # so we preserve that downstream-compatible contract here.
+        if (
+            index + 2 < len(source)
+            and source[index + 2] == "'"
+            and source[index + 1] not in {"'", "\n"}
+        ):
+            return Token(line, "CHARC", source[index + 1]), 3
 
         next_quote = source.find("'", index + 1)
         next_newline = source.find("\n", index + 1)
@@ -203,7 +274,7 @@ class SNLLexer:
         stop = min(stops) if stops else len(source) - 1
         consumed = max(1, stop - index + 1)
         return Token(line, "ERROR", source[index : index + consumed]), consumed
-
+    
 def format_text(tokens: Iterable[Token]) -> str:
     rows = ["LineShow  Lex          Sem", "--------  -----------  ---"]
     for token in tokens:
