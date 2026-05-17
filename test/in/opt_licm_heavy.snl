@@ -1,0 +1,18 @@
+program licmHeavy
+{LICM 极端测试：循环内有不变式计算}
+
+var
+  integer i, n, base, offset, total;
+
+begin
+  read(n);
+  base := 100;
+  i := 0;
+  total := 0;
+  while i < n do
+    offset := base * 4;
+    total := total + offset;
+    i := i + 1
+  endwh;
+  write(total)
+end.

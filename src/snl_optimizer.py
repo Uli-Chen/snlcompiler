@@ -544,7 +544,7 @@ def defined_temp(quad: Quad) -> str | None:
 
     其他操作若 result 是临时变量（is_temp），则返回该变量名。
     """
-    if quad.op in {"store", "goto", "return", "param", "write", "writeln"}:
+    if quad.op in {"store", "goto", "return", "param", "write", "writeln", "read"}:
         return None
     if quad.op.startswith("if_false_"):
         return None
@@ -570,7 +570,7 @@ def temp_uses(quad: Quad) -> set[str]:
     if is_temp(quad.arg2):
         uses.add(str(quad.arg2))
     # 这些操作的 result 是"使用"而非"定义"
-    if quad.op in {"store", "param", "write", "writeln", "return"} and is_temp(quad.result):
+    if quad.op in {"store", "param", "write", "writeln", "return", "read"} and is_temp(quad.result):
         uses.add(str(quad.result))
     if quad.op.startswith("if_false_") and is_temp(quad.result):
         uses.add(str(quad.result))
@@ -650,7 +650,7 @@ def _can_hoist(quad: Quad, defined_in_loop: set[str]) -> bool:
     """判断一条四元式是否可以外提到循环前。
 
     外提条件（同时满足）：
-      1. 操作属于 PURE_EXPR_OPS（无副作用的纯表达式）
+      1. 操作属于 PURE_EXPR_OPS 且不是 load（load 读取的内存内容可能在循环内被 store 修改）
       2. result 是字符串（临时变量或用户变量），而非 None
       3. 两个操作数均为"循环不变"：
            - None 或整数字面量：显然不变
@@ -659,6 +659,8 @@ def _can_hoist(quad: Quad, defined_in_loop: set[str]) -> bool:
     """
     if quad.op not in PURE_EXPR_OPS:
         return False  # 有副作用的操作不能外提
+    if quad.op == "load":
+        return False  # load 读取内存，内存内容可能在循环内被 store 修改，保守不外提
     if not isinstance(quad.result, str):
         return False  # 结果不是变量，无意义
 

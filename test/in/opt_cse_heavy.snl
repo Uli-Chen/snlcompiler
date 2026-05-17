@@ -1,0 +1,15 @@
+program cseHeavy
+{CSE 极端测试：大量重复表达式}
+
+var
+  integer a, b, c, x, y, z;
+
+begin
+  read(a);
+  read(b);
+  x := a + b;
+  y := a + b;
+  z := a + b;
+  c := x + y + z;
+  write(c)
+end.

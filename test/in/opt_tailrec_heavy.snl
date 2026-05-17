@@ -1,0 +1,19 @@
+program tailrecHeavy
+{尾递归极端测试：深度递归求和}
+
+var
+  integer answer;
+
+procedure sumTail(integer n, acc);
+begin
+  if n < 1 then
+    answer := acc
+  else
+    sumTail(n - 1, acc + n)
+  fi
+end
+
+begin
+  sumTail(100, 0);
+  write(answer)
+end.

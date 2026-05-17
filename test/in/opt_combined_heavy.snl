@@ -1,0 +1,17 @@
+program combinedHeavy
+{综合极端测试：常量折叠 + CSE + 代数化简 + DCE 联合优化}
+
+var
+  integer a, b, x, y, z, w, dead1, dead2;
+
+begin
+  read(a);
+  read(b);
+  x := a + b;
+  y := a + b;
+  z := (2 * 3 + 4) * 1;
+  w := x + z;
+  dead1 := a * b;
+  dead2 := dead1 + 1;
+  write(w)
+end.

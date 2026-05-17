@@ -1,0 +1,10 @@
+program foldHeavy
+{常量折叠极端测试：所有计算在编译期可完成}
+
+var
+  integer result;
+
+begin
+  result := (3 + 4) * (10 - 2) / (1 + 1);
+  write(result)
+end.
